@@ -58,11 +58,11 @@
             }
         }
 
-        public static object TypeMapping<T>(T v, ExcelColumnInfo pInfo, object newValue, object itemValue, int rowIndex, string startCell, Configuration _config) where T : class, new()
+        public static object TypeMapping<T>(T v, ExcelColumnInfo pInfo, object newValue, object itemValue, int rowIndex, string startCell, Configuration _config, bool shouldSetValue = true) where T : class
         {
             try
             {
-                return TypeMappingImpl(v, pInfo, ref newValue, itemValue, _config);
+                return TypeMappingImpl(v, pInfo, ref newValue, itemValue, _config, shouldSetValue);
             }
             catch (Exception ex) when (ex is InvalidCastException || ex is FormatException)
             {
@@ -73,7 +73,7 @@
             }
         }
 
-        private static object TypeMappingImpl<T>(T v, ExcelColumnInfo pInfo, ref object newValue, object itemValue, Configuration _config) where T : class, new()
+        private static object TypeMappingImpl<T>(T v, ExcelColumnInfo pInfo, ref object newValue, object itemValue, Configuration _config, bool shouldSetProperty) where T : class
         {
             if (pInfo.Nullable && string.IsNullOrWhiteSpace(itemValue?.ToString()))
             {
@@ -156,8 +156,9 @@
                 // Use pInfo.ExcludeNullableType to resolve : https://github.com/shps951023/MiniExcel/issues/138
                 newValue = Convert.ChangeType(itemValue, pInfo.ExcludeNullableType, _config.Culture);
             }
-
-            pInfo.Property.SetValue(v, newValue);
+            
+            if (shouldSetProperty)
+                pInfo.Property.SetValue(v, newValue);
             return newValue;
         }
 

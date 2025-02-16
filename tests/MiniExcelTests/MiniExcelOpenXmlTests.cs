@@ -92,7 +92,50 @@ namespace MiniExcelLibs.Tests
             [ExcelColumnIndex(3)] // start with 0
             public string Test7 { get; set; }
         }
-
+        
+        public record ExcelToRecordNoPropertiesDemo(Guid ID, string Name, DateTime BoD, int Age, decimal Points);
+        public record ExcelToRecordWithPropertiesDemo(Guid ID, string Name, DateTime BoD, int Age, decimal Points)
+        {
+            public bool VIP { get; set; }
+            public string Mail { get; set; }
+        };
+        public record ExcelToRecordFakePropertiesDemo(Guid OID);
+        
+        [Fact]
+        public void RecordNoPropertiesDeserializer()
+        {
+            var path = "../../../../../samples/xlsx/TestTypeMapping.xlsx";
+            var rows = MiniExcel.Query<ExcelToRecordNoPropertiesDemo>(path).ToList();
+            
+            Assert.Equal(Guid.Parse("78DE23D2-DCB6-BD3D-EC67-C112BBC322A2"), rows[0].ID);
+            Assert.Equal("Wade", rows[0].Name);
+            Assert.Equal(new DateTime(2020, 9,27), rows[0].BoD);
+            Assert.Equal(36, rows[0].Age);
+            Assert.Equal(5019.12m, rows[0].Points);
+        }
+        
+        [Fact]
+        public void RecordFakePropertiesDeserializer_ShouldThrow()
+        {
+            var path = "../../../../../samples/xlsx/TestTypeMapping.xlsx";
+            Assert.Throws<InvalidOperationException>(() => MiniExcel.Query<ExcelToRecordFakePropertiesDemo>(path).ToList());
+        }
+        
+        [Fact]
+        public void RecordWithPropertiesDeserializer()
+        {
+            var path = "../../../../../samples/xlsx/TestTypeMapping.xlsx";
+            var rows = MiniExcel.Query<ExcelToRecordWithPropertiesDemo>(path).ToList();
+            
+            Assert.Equal(Guid.Parse("78DE23D2-DCB6-BD3D-EC67-C112BBC322A2"), rows[0].ID);
+            Assert.Equal("Wade", rows[0].Name);
+            Assert.Equal(new DateTime(2020, 9,27), rows[0].BoD);
+            Assert.Equal(36, rows[0].Age);
+            Assert.Equal(5019.12m, rows[0].Points);
+            Assert.Equal("tellus.Suspendisse@congue.edu", rows[0].Mail);
+            Assert.False(rows[0].VIP);
+        }
+        
         [Fact]
         public void CustomAttributeWihoutVaildPropertiesTest()
         {

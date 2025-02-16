@@ -106,7 +106,7 @@ namespace MiniExcelLibs.Csv
                 }
             }
         }
-        public IEnumerable<T> Query<T>(string sheetName, string startCell) where T : class, new()
+        public IEnumerable<T> Query<T>(string sheetName, string startCell) where T : class
         {
             return ExcelOpenXmlSheetReader.QueryImpl<T>(Query(false, sheetName, startCell), startCell, this._config);
         }
@@ -130,7 +130,7 @@ namespace MiniExcelLibs.Csv
             return Task.Run(() => Query(UseHeaderRow, sheetName, startCell), cancellationToken);
         }
 
-        public Task<IEnumerable<T>> QueryAsync<T>(string sheetName, string startCell, CancellationToken cancellationToken = default(CancellationToken)) where T : class, new()
+        public Task<IEnumerable<T>> QueryAsync<T>(string sheetName, string startCell, CancellationToken cancellationToken = default(CancellationToken)) where T : class
         {
             return Task.Run(() => Query<T>(sheetName, startCell), cancellationToken);
         }
@@ -186,7 +186,7 @@ namespace MiniExcelLibs.Csv
                 }
             }
         }
-        public IEnumerable<T> QueryRange<T>(string sheetName, string startCell, string endCel) where T : class, new()
+        public IEnumerable<T> QueryRange<T>(string sheetName, string startCell, string endCel) where T : class
         {
             return ExcelOpenXmlSheetReader.QueryImplRange<T>(QueryRange(false, sheetName, startCell, endCel), startCell, endCel, this._config);
         }
@@ -195,7 +195,7 @@ namespace MiniExcelLibs.Csv
             return Task.Run(() => QueryRange(UseHeaderRow, sheetName, startCell, endCel), cancellationToken);
         }
 
-        public Task<IEnumerable<T>> QueryAsyncRange<T>(string sheetName, string startCell, string endCel, CancellationToken cancellationToken = default(CancellationToken)) where T : class, new()
+        public Task<IEnumerable<T>> QueryAsyncRange<T>(string sheetName, string startCell, string endCel, CancellationToken cancellationToken = default(CancellationToken)) where T : class
         {
             return Task.Run(() => Query<T>(sheetName, startCell), cancellationToken);
         }

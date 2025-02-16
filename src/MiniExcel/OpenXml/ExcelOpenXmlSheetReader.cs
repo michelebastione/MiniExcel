@@ -7,6 +7,7 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
@@ -68,7 +69,7 @@ namespace MiniExcelLibs.OpenXml
 
                 sheetEntry = sheets.Single(w => w.FullName == $"xl/{sheetRecord.Path}" || w.FullName == $"/xl/{sheetRecord.Path}" || w.FullName == sheetRecord.Path || sheetRecord.Path == $"/{w.FullName}");
             }
-            else if (sheets.Count() > 1)
+            else if (sheets.Length > 1)
             {
                 SetWorkbookRels(_archive.entries);
                 var s = _sheetRecords[0];
@@ -410,27 +411,140 @@ namespace MiniExcelLibs.OpenXml
             }
         }
 
-        public IEnumerable<T> Query<T>(string sheetName, string startCell) where T : class, new()
+        public IEnumerable<T> Query<T>(string sheetName, string startCell) where T : class
         {
+            var type = typeof(T);
             if (sheetName == null)
             {
-                var sheetInfo = CustomPropertyHelper.GetExcellSheetInfo(typeof(T), this._config);
+                var sheetInfo = CustomPropertyHelper.GetExcellSheetInfo(type, _config);
                 if (sheetInfo != null)
                 {
                     sheetName = sheetInfo.ExcelSheetName;
                 }
             }
-            return ExcelOpenXmlSheetReader.QueryImpl<T>(Query(false, sheetName, startCell), startCell, this._config);
+            
+            var constructorsWithParams = type
+                .GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .ToDictionary(c => c, c => c.GetParameters());
+
+            var rows = Query(false, sheetName, startCell);
+            if (constructorsWithParams.Any(x => x.Value.Length == 0))
+                return QueryImpl<T>(rows, startCell, _config);
+
+            return QueryImpl<T>(rows, constructorsWithParams, startCell, _config);
         }
 
-        public static IEnumerable<T> QueryImpl<T>(IEnumerable<IDictionary<string, object>> values, string startCell, Configuration configuration) where T : class, new()
+        private static IEnumerable<T> QueryImpl<T>(IEnumerable<IDictionary<string, object>> values, Dictionary<ConstructorInfo, ParameterInfo[]> constructors, string startCell, Configuration configuration) where T : class
+        {
+            var type = typeof(T);
+            var orderedCtors = constructors
+                .OrderBy(c => c.Key.IsPublic ? 0 : c.Key.IsPrivate ? 2 : 1)
+                .ThenBy(c => c.Value.Length)
+                .ToArray();
+            
+            List<ExcelColumnInfo> excelProperties = null;
+            Dictionary<string, int> headersDic = null;
+            string[] keys = null;
+
+            object RetrievePropertyValue(IDictionary<string, object> propDic, ExcelColumnInfo colInfo)
+            {
+                if (colInfo.ExcelIndexName != null && propDic.TryGetValue(colInfo.ExcelIndexName, out var itemValue))
+                    return itemValue;
+
+                if (!headersDic.TryGetValue(colInfo.ExcelColumnName, out var columnId))
+                    return null;
+                    
+                var columnName = keys[columnId];
+                propDic.TryGetValue(columnName, out itemValue);
+                return itemValue;
+            }
+            
+            var first = true;
+            var rowIndex = 0;
+
+            foreach (var item in values)
+            {
+                if (first)
+                {
+                    keys = item.Keys.ToArray();
+                    headersDic = GetExcelHeaders(item);
+                    excelProperties = CustomPropertyHelper.GetExcelCustomPropertyInfos(type, keys, configuration);
+
+                    first = false;
+                    continue;
+                }
+
+                T result = null;
+                foreach (var ctor in orderedCtors)
+                {
+                    var ctorInfo = ctor.Key;
+                    var paramsInfos = ctor.Value;
+                    var paramsValues = new object[paramsInfos.Length];
+                    var excelPropsFromParams = new ExcelColumnInfo[paramsInfos.Length];
+                    
+                    for (var i = 0; i < paramsInfos.Length; i++)
+                    {
+                        var param = paramsInfos[i];
+                        var matchingProp = excelProperties.SingleOrDefault(x => 
+                            x.ExcelColumnName == param.Name &&
+                            x.ExcludeNullableType.FullName == param.ParameterType.FullName);
+                        
+                        if (matchingProp == null || !headersDic.ContainsKey(param.Name))
+                            goto NextCtor; //todo: find a way to remove this goto
+
+                        excelPropsFromParams[i] = matchingProp;
+                        
+                        var itemValue = RetrievePropertyValue(item, matchingProp);
+                        if (itemValue == null)
+                        {
+                            paramsValues[i] = param.ParameterType;
+                        }
+                        else
+                        {
+                            var newValue = TypeHelper.TypeMapping(type, matchingProp, new object(), itemValue, rowIndex, startCell, configuration, false);
+                            paramsValues[i] = newValue;
+                        }
+                    }
+
+                    result = ctorInfo.Invoke(paramsValues) as T;
+                    foreach (var prop in excelProperties.Except(excelPropsFromParams))
+                    {
+                        foreach (var alias in prop.ExcelColumnAliases ?? Enumerable.Empty<string>())
+                        {
+                            if (!headersDic.TryGetValue(alias, out var columnId))
+                                continue;
+                            
+                            var columnName = keys[columnId];
+                            item.TryGetValue(columnName, out var aliasItemValue);
+                            
+                            if (aliasItemValue != null)
+                                TypeHelper.TypeMapping(result, prop, new object(), aliasItemValue, rowIndex, startCell, configuration);
+                        }
+                        
+                        var itemValue = RetrievePropertyValue(item, prop);
+                        if (itemValue != null) 
+                            TypeHelper.TypeMapping(result, prop, new object(), itemValue, rowIndex, startCell, configuration);
+                    }
+                    
+                    rowIndex++;
+                    yield return result;
+                    break;
+                    
+                    // label with empty section to go to the next constructor from inner loop 
+                    NextCtor: ;
+                }
+
+                if (result == null)
+                    throw new InvalidOperationException($"A parameterless default constructor or one with compatible signature could not be found for {type.Name} materialization.");
+            }
+        }
+        
+        public static IEnumerable<T> QueryImpl<T>(IEnumerable<IDictionary<string, object>> values, string startCell, Configuration configuration) where T : class
         {
             var type = typeof(T);
 
             List<ExcelColumnInfo> props = null;
             //TODO:need to optimize
-
-            string[] headers = null;
 
             Dictionary<string, int> headersDic = null;
             string[] keys = null;
@@ -440,25 +554,15 @@ namespace MiniExcelLibs.OpenXml
             {
                 if (first)
                 {
-                    keys = item.Keys.ToArray();//.Select((s, i) => new { s,i}).ToDictionary(_=>_.s,_=>_.i);
-                    headers = item?.Values?.Select(s => s?.ToString())?.ToArray(); //TODO:remove
-                    headersDic = headers.Select((o, i) => new { o = (o == null ? "" : o), i })
-                        .OrderBy(x => x.i)
-                        .GroupBy(x => x.o)
-                        .Select(group => new { Group = group, Count = group.Count() })
-                        .SelectMany(groupWithCount =>
-                           groupWithCount.Group.Select(b => b)
-                           .Zip(
-                               Enumerable.Range(1, groupWithCount.Count),
-                               (j, i) => new { key = (i == 1 ? j.o : $"{j.o}_____{i}"), idx = j.i, RowNumber = i }
-                           )
-                        ).ToDictionary(_ => _.key, _ => _.idx);
+                    keys = item.Keys.ToArray();
+                    headersDic = GetExcelHeaders(item);
+                    
                     //TODO: alert don't duplicate column name
                     props = CustomPropertyHelper.GetExcelCustomPropertyInfos(type, keys, configuration);
                     first = false;
                     continue;
                 }
-                var v = new T();
+                var v = Activator.CreateInstance<T>();
                 foreach (var pInfo in props)
                 {
                     if (pInfo.ExcelColumnAliases != null)
@@ -504,6 +608,17 @@ namespace MiniExcelLibs.OpenXml
             }
         }
 
+        private static Dictionary<string, int> GetExcelHeaders(IDictionary<string, object> item) => item.Values
+            .Select((obj, idx) => new { Obj = obj?.ToString() ?? "", Index = idx })
+            .GroupBy(x => x.Obj)
+            .Select(group => new { Group = group, Count = group.Count() })
+            .SelectMany(groupWithCount => groupWithCount.Group
+                .Zip(
+                    Enumerable.Range(1, groupWithCount.Count),
+                    (group, idx) => new { Key = idx == 1 ? group.Obj : $"{group.Obj}_____{idx}", Index = group.Index }
+                ))
+            .ToDictionary(kv => kv.Key, kv => kv.Index);
+        
         private void SetSharedStrings()
         {
             if (_sharedStrings != null)
@@ -755,7 +870,7 @@ namespace MiniExcelLibs.OpenXml
             return await Task.Run(() => Query(UseHeaderRow, sheetName, startCell), cancellationToken).ConfigureAwait(false);
         }
 
-        public async Task<IEnumerable<T>> QueryAsync<T>(string sheetName, string startCell, CancellationToken cancellationToken = default(CancellationToken)) where T : class, new()
+        public async Task<IEnumerable<T>> QueryAsync<T>(string sheetName, string startCell, CancellationToken cancellationToken = default(CancellationToken)) where T : class
         {
             return await Task.Run(() => Query<T>(sheetName, startCell), cancellationToken).ConfigureAwait(false);
         }
@@ -1139,19 +1254,141 @@ namespace MiniExcelLibs.OpenXml
             }
         }
 
-        public IEnumerable<T> QueryRange<T>(string sheetName, string startCell, string endCell) where T : class, new()
+        public IEnumerable<T> QueryRange<T>(string sheetName, string startCell, string endCell) where T : class
         {
-            return ExcelOpenXmlSheetReader.QueryImplRange<T>(QueryRange(false, sheetName, startCell, endCell), startCell, endCell, this._config);
-        }
+            var type = typeof(T);
+            var constructorsWithParams = type
+                .GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .ToDictionary(c => c, c => c.GetParameters());
 
-        public static IEnumerable<T> QueryImplRange<T>(IEnumerable<IDictionary<string, object>> values, string startCell, string endCell, Configuration configuration) where T : class, new()
+            var rows = QueryRange(false, sheetName, startCell, endCell);
+            if (constructorsWithParams.Any(x => x.Value.Length == 0))
+                return QueryImplRange<T>(rows, startCell, endCell, _config);
+            return QueryImplRange<T>(rows, constructorsWithParams, startCell, endCell, _config);
+        }
+        
+        
+        private static IEnumerable<T> QueryImplRange<T>(IEnumerable<IDictionary<string, object>> values, Dictionary<ConstructorInfo, ParameterInfo[]> constructors, string startCell, string endCell, Configuration configuration) where T : class
+        {
+            var type = typeof(T);
+            var orderedCtors = constructors
+                .OrderBy(c => c.Key.IsPublic ? 0 : c.Key.IsPrivate ? 2 : 1)
+                .ThenBy(c => c.Value.Length)
+                .ToArray();
+
+            List<ExcelColumnInfo> excelProperties = null;
+            Dictionary<string, int> headersDic = null;
+            string[] keys = null;
+
+            object RetrievePropertyValue(IDictionary<string, object> propDic, ExcelColumnInfo colInfo)
+            {
+                if (colInfo.ExcelIndexName != null && propDic.TryGetValue(colInfo.ExcelIndexName, out var itemValue))
+                    return itemValue;
+
+                if (!headersDic.TryGetValue(colInfo.ExcelColumnName, out var columnId))
+                    return null;
+                    
+                var columnName = keys[columnId];
+                propDic.TryGetValue(columnName, out itemValue);
+                return itemValue;
+            }
+
+            var first = true;
+            var rowIndex = 0;
+
+            foreach (var item in values)
+            {
+                if (first)
+                {
+                    keys = item.Keys.ToArray();
+                    headersDic = GetExcelHeaders(item);
+                    excelProperties = CustomPropertyHelper.GetExcelCustomPropertyInfos(type, keys, configuration);
+
+                    first = false;
+                    continue;
+                }
+
+                T result = null;
+                foreach (var ctor in orderedCtors)
+                {
+                    var ctorInfo = ctor.Key;
+                    var paramsInfos = ctor.Value;
+                    var paramsValues = new object[paramsInfos.Length];
+                    var excelPropsFromParams = new ExcelColumnInfo[paramsInfos.Length];
+
+                    for (var i = 0; i < paramsInfos.Length; i++)
+                    {
+                        var param = paramsInfos[i];
+                        var matchingProp = excelProperties.SingleOrDefault(x =>
+                            x.ExcelColumnName == param.Name &&
+                            x.ExcludeNullableType.FullName == param.ParameterType.FullName);
+
+                        if (matchingProp == null || !headersDic.ContainsKey(param.Name))
+                            goto NextCtor; //todo: find a way to remove this goto
+
+                        excelPropsFromParams[i] = matchingProp;
+
+                        var itemValue = RetrievePropertyValue(item, matchingProp);
+                        if (itemValue == null)
+                        {
+                            paramsValues[i] = param.ParameterType;
+                        }
+                        else
+                        {
+                            var newValue = TypeHelper.TypeMapping(type, matchingProp, new object(), itemValue, rowIndex,
+                                startCell, configuration, false);
+                            paramsValues[i] = newValue;
+                        }
+                    }
+
+                    result = ctorInfo.Invoke(paramsValues) as T;
+                    foreach (var pInfo in excelProperties.Except(excelPropsFromParams))
+                    {
+                        if (pInfo.ExcelColumnAliases != null)
+                        {
+                            foreach (var alias in pInfo.ExcelColumnAliases)
+                            {
+                                if (headersDic.TryGetValue(alias, out var value))
+                                {
+                                    var itemValue = item[keys[value]];
+                                    if (itemValue != null)
+                                        TypeHelper.TypeMapping(result, pInfo, new object(), itemValue, rowIndex, startCell, configuration);
+                                }
+                            }
+                        }
+
+                        //Q: Why need to check every time? A: it needs to check everytime, because it's dictionary
+                        {
+                            object itemValue = null;
+                            if (pInfo.ExcelIndexName != null && keys.Contains(pInfo.ExcelIndexName))
+                                itemValue = item[pInfo.ExcelIndexName];
+                            else if (headersDic.TryGetValue(pInfo.ExcelColumnName, out var value))
+                                itemValue = item[keys[value]];
+
+                            if (itemValue != null)
+                                TypeHelper.TypeMapping(result, pInfo, new object(), itemValue, rowIndex, startCell, configuration);
+                        }
+                    }
+
+                    rowIndex++;
+                    yield return result;
+                    break;
+                    
+                    // label with empty section to go to the next constructor from inner loop
+                    NextCtor: ;
+                }
+                
+                if (result == null)
+                    throw new InvalidOperationException($"A parameterless default constructor or one with compatible signature could not be found for {type.FullName} materialization.");
+            }
+        }
+        
+        public static IEnumerable<T> QueryImplRange<T>(IEnumerable<IDictionary<string, object>> values, string startCell, string endCell, Configuration configuration) where T : class
         {
             var type = typeof(T);
 
             List<ExcelColumnInfo> props = null;
             //TODO:need to optimize
-
-            string[] headers = null;
 
             Dictionary<string, int> headersDic = null;
             string[] keys = null;
@@ -1161,25 +1398,15 @@ namespace MiniExcelLibs.OpenXml
             {
                 if (first)
                 {
-                    keys = item.Keys.ToArray();//.Select((s, i) => new { s,i}).ToDictionary(_=>_.s,_=>_.i);
-                    headers = item?.Values?.Select(s => s?.ToString())?.ToArray(); //TODO:remove
-                    headersDic = headers.Select((o, i) => new { o = (o == null ? string.Empty : o), i })
-                        .OrderBy(x => x.i)
-                        .GroupBy(x => x.o)
-                        .Select(group => new { Group = group, Count = group.Count() })
-                        .SelectMany(groupWithCount =>
-                           groupWithCount.Group.Select(b => b)
-                           .Zip(
-                               Enumerable.Range(1, groupWithCount.Count),
-                               (j, i) => new { key = (i == 1 ? j.o : $"{j.o}_____{i}"), idx = j.i, RowNumber = i }
-                           )
-                        ).ToDictionary(_ => _.key, _ => _.idx);
+                    keys = item.Keys.ToArray();
+                    headersDic = GetExcelHeaders(item);
+                    
                     //TODO: alert don't duplicate column name
                     props = CustomPropertyHelper.GetExcelCustomPropertyInfos(type, keys, configuration);
                     first = false;
                     continue;
                 }
-                var v = new T();
+                var v = Activator.CreateInstance<T>();
                 foreach (var pInfo in props)
                 {
                     if (pInfo.ExcelColumnAliases != null)
@@ -1225,7 +1452,7 @@ namespace MiniExcelLibs.OpenXml
             return await Task.Run(() => Query(UseHeaderRow, sheetName, startCell), cancellationToken).ConfigureAwait(false);
         }
 
-        public async Task<IEnumerable<T>> QueryAsyncRange<T>(string sheetName, string startCell, string endCell, CancellationToken cancellationToken = default(CancellationToken)) where T : class, new()
+        public async Task<IEnumerable<T>> QueryAsyncRange<T>(string sheetName, string startCell, string endCell, CancellationToken cancellationToken = default(CancellationToken)) where T : class
         {
             return await Task.Run(() => Query<T>(sheetName, startCell), cancellationToken).ConfigureAwait(false);
         }
