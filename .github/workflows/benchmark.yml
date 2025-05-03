@@ -1,0 +1,34 @@
+name: MiniExcel Benchmark
+
+on:
+  push:
+    branches: [ "master" ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 9.0.x
+    - name: Restore dependencies
+      run: dotnet restore
+      working-directory: ./benchmarks/MiniExcel.Benchmarks
+    - name: Build
+      run: dotnet build --no-restore
+      working-directory: ./benchmarks/MiniExcel.Benchmarks
+    - name: Benchmark
+      run: dotnet run -c Release -f net9.0
+      working-directory: ./benchmarks/MiniExcel.Benchmarks
+    - name: Commit report
+      working-directory: ./benchmarks/MiniExcel.Benchmarks/BenchmarkDotNet.Artifacts/results
+      run: |
+           git add MiniExcelLibs.Benchmarks.XlsxBenchmark-report-github.md
+           git commit -am "Automated benchmark report"
+           git push
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
