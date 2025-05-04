@@ -22,7 +22,7 @@ public class XlsxAsyncBenchmark : BenchmarkBase
         using var path = AutoDeletingPath.Create();
         var value = new
         {
-            employees = Enumerable.Range(1, rowCount)
+            employees = Enumerable.Range(1, RowCount)
                 .Select(s => new 
                 {
                     name = "Jack",
