@@ -2,7 +2,7 @@ name: MiniExcel Benchmark
 
 on:
   push:
-    branches: [ "automatic_benchmark" ]
+    branches: [ "master" ]
 
 jobs:
   build:
