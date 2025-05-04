@@ -1,7 +1,7 @@
 ﻿using BenchmarkDotNet.Attributes;
 using MiniExcelLibs.Benchmarks.Utils;
 
-namespace MiniExcelLibs.Benchmarks;
+namespace MiniExcelLibs.Benchmarks.BenchmarkSections;
 
 public class XlsxAsyncBenchmark : BenchmarkBase
 {
