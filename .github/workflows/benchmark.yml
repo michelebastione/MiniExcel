@@ -4,6 +4,10 @@ on:
   push:
     branches: [ "master" ]
 
+permissions:
+  contents: write
+  deployments: write
+
 jobs:
   build:
 
@@ -26,6 +30,7 @@ jobs:
       working-directory: ./benchmarks/MiniExcel.Benchmarks
       env:
         BenchmarkMode: Automatic
+        BenchmarkSection: query
     - name: Commit report
       working-directory: ./benchmarks/MiniExcel.Benchmarks/BenchmarkDotNet.Artifacts/results
       run: |
