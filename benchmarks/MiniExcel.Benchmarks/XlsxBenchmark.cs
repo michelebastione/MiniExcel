@@ -28,7 +28,7 @@ public class XlsxBenchmark : BenchmarkBase
         using var path = AutoDeletingPath.Create();
         var value = new
         {
-            employees = Enumerable.Range(1, rowCount)
+            employees = Enumerable.Range(1, RowCount)
                 .Select(s => new
                 {
                     name = "Jack",
@@ -47,7 +47,7 @@ public class XlsxBenchmark : BenchmarkBase
         using var path = AutoDeletingPath.Create();
         var value = new
         {
-            employees = Enumerable.Range(1, rowCount)
+            employees = Enumerable.Range(1, RowCount)
                 .Select(s => new
                 {
                     name = "Jack",
@@ -65,13 +65,13 @@ public class XlsxBenchmark : BenchmarkBase
     [Benchmark(Description = "MiniExcel QueryFirst")]
     public void MiniExcel_QueryFirst_Test()
     {
-        _ = MiniExcel.Query(filePath).First();
+        _ = MiniExcel.Query(FilePath).First();
     }
 
     [Benchmark(Description = "MiniExcel Query")]
     public void MiniExcel_Query()
     {
-        foreach (var item in MiniExcel.Query(filePath))
+        foreach (var item in MiniExcel.Query(FilePath))
         {
         }
     }
@@ -79,7 +79,7 @@ public class XlsxBenchmark : BenchmarkBase
     [Benchmark(Description = "ExcelDataReader QueryFirst")]
     public void ExcelDataReader_QueryFirst_Test()
     {
-        using var stream = File.Open(filePath, FileMode.Open, FileAccess.Read);
+        using var stream = File.Open(FilePath, FileMode.Open, FileAccess.Read);
         using var reader = ExcelReaderFactory.CreateReader(stream);
 
         List<object> d = [];
@@ -92,7 +92,7 @@ public class XlsxBenchmark : BenchmarkBase
     [Benchmark(Description = "ExcelDataReader Query")]
     public void ExcelDataReader_Query_Test()
     {
-        using var stream = File.Open(filePath, FileMode.Open, FileAccess.Read);
+        using var stream = File.Open(FilePath, FileMode.Open, FileAccess.Read);
         using var reader = ExcelReaderFactory.CreateReader(stream);
 
         while (reader.Read())
@@ -106,7 +106,7 @@ public class XlsxBenchmark : BenchmarkBase
     [Benchmark(Description = "Epplus QueryFirst")]
     public void Epplus_QueryFirst_Test()
     {
-        using var p = new ExcelPackage(new FileInfo(filePath));
+        using var p = new ExcelPackage(new FileInfo(FilePath));
         p.Workbook.Worksheets[0].Row(1);
     }
 
@@ -115,7 +115,7 @@ public class XlsxBenchmark : BenchmarkBase
     {
         // [How do I iterate through rows in an excel table using epplus? - Stack Overflow] (https://stackoverflow.com/questions/21742038/how-do-i-iterate-through-rows-in-an-excel-table-using-epplus)
 
-        using var p = new ExcelPackage(new FileInfo(filePath));
+        using var p = new ExcelPackage(new FileInfo(FilePath));
 
         var workSheet = p.Workbook.Worksheets[0];
         var start = workSheet.Dimension.Start;
@@ -133,21 +133,21 @@ public class XlsxBenchmark : BenchmarkBase
     [Benchmark(Description = "ClosedXml QueryFirst")]
     public void ClosedXml_QueryFirst_Test()
     {
-        using var workbook = new XLWorkbook(filePath);
+        using var workbook = new XLWorkbook(FilePath);
         workbook.Worksheet(1).Row(1);
     }
 
     [Benchmark(Description = "ClosedXml Query")]
     public void ClosedXml_Query_Test()
     {
-        using var workbook = new XLWorkbook(filePath);
+        using var workbook = new XLWorkbook(FilePath);
         workbook.Worksheet(1).Rows();
     }
 
     [Benchmark(Description = "OpenXmlSDK QueryFirst")]
     public void OpenXmlSDK_QueryFirst_Test()
     {
-        using var spreadsheetDocument = SpreadsheetDocument.Open(filePath, false);
+        using var spreadsheetDocument = SpreadsheetDocument.Open(FilePath, false);
 
         var workbookPart = spreadsheetDocument.WorkbookPart;
         var worksheetPart = workbookPart!.WorksheetParts.First();
@@ -159,7 +159,7 @@ public class XlsxBenchmark : BenchmarkBase
     [Benchmark(Description = "OpenXmlSDK Query")]
     public void OpenXmlSDK_Query_Test()
     {
-        using var spreadsheetDocument = SpreadsheetDocument.Open(filePath, false);
+        using var spreadsheetDocument = SpreadsheetDocument.Open(FilePath, false);
 
         var workbookPart = spreadsheetDocument.WorkbookPart;
         var worksheetPart = workbookPart!.WorksheetParts.First();
