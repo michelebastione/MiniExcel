@@ -34,7 +34,7 @@ jobs:
     - name: Commit report
       working-directory: ./benchmarks/MiniExcel.Benchmarks/BenchmarkDotNet.Artifacts/results
       run: |
-           git add MiniExcelLibs.Benchmarks.XlsxBenchmark-report-github.md
+           git add -f MiniExcelLibs.Benchmarks.XlsxBenchmark-report-github.md
            git commit -am "Automated benchmark report"
            git push
       env:
