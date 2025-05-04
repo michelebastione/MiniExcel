@@ -24,6 +24,8 @@ jobs:
     - name: Benchmark
       run: dotnet run -c Release -f net9.0
       working-directory: ./benchmarks/MiniExcel.Benchmarks
+      env:
+        BenchmarkMode: Automatic
     - name: Commit report
       working-directory: ./benchmarks/MiniExcel.Benchmarks/BenchmarkDotNet.Artifacts/results
       run: |
