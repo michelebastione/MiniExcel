@@ -35,6 +35,8 @@ jobs:
       working-directory: ./benchmarks
       run: |
            cp -r ./MiniExcel.Benchmarks/BenchmarkDotNet.Artifacts/results ./
+           git config user.name github-actions
+           git config user.email github-actions@github.com
            git add ./results
            git commit -am "Automated benchmark report"
            git push
