@@ -32,9 +32,10 @@ jobs:
         BenchmarkMode: Automatic
         BenchmarkSection: query
     - name: Commit report
-      working-directory: ./benchmarks/MiniExcel.Benchmarks/BenchmarkDotNet.Artifacts/results
+      working-directory: ./benchmarks
       run: |
-           git add -f **/*.md
+           cp -r ./MiniExcel.Benchmarks/BenchmarkDotNet.Artifacts/results ./
+           git add ./results
            git commit -am "Automated benchmark report"
            git push
       env:
