@@ -1,22 +1,24 @@
-﻿namespace MiniExcelLibs
-{
-    using MiniExcelLibs.OpenXml;
-    using System;
-    using System.Collections;
-    using System.Collections.Generic;
-    using System.Data;
-    using System.IO;
-    using System.Linq;
-    using System.Threading;
-    using System.Threading.Tasks;
-    using Utils;
+﻿using MiniExcelLibs.OpenXml;
+using MiniExcelLibs.Utils;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Data;
+using System.Dynamic;
+using System.IO;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 
+namespace MiniExcelLibs
+{
     public static partial class MiniExcel
     {
         public static async Task<int> InsertAsync(string path, object value, string sheetName = "Sheet1", ExcelType excelType = ExcelType.UNKNOWN, IConfiguration configuration = null, bool printHeader = true, bool overwriteSheet = false, CancellationToken cancellationToken = default)
         {
-            if (Path.GetExtension(path).ToLowerInvariant() == ".xlsm")
-                throw new NotSupportedException("MiniExcel's Insert does not support the .xlsm format");
+            if (Path.GetExtension(path).Equals(".xlsm", StringComparison.InvariantCultureIgnoreCase))
+                throw new NotSupportedException("MiniExcel.InsertAsync does not support the .xlsm format");
 
             if (!File.Exists(path))
             {
@@ -54,8 +56,8 @@
 
         public static async Task<int[]> SaveAsAsync(string path, object value, bool printHeader = true, string sheetName = "Sheet1", ExcelType excelType = ExcelType.UNKNOWN, IConfiguration configuration = null, bool overwriteFile = false, CancellationToken cancellationToken = default)
         {
-            if (Path.GetExtension(path).ToLowerInvariant() == ".xlsm")
-                throw new NotSupportedException("MiniExcel's SaveAs does not support the .xlsm format");
+            if (Path.GetExtension(path).Equals(".xlsm", StringComparison.InvariantCultureIgnoreCase))
+                throw new NotSupportedException("MiniExcel.SaveAsAsync does not support the .xlsm format");
 
             using (var stream = overwriteFile ? File.Create(path) : new FileStream(path, FileMode.CreateNew))
                 return await SaveAsAsync(stream, value, printHeader, sheetName, ExcelTypeHelper.GetExcelType(path, excelType), configuration, cancellationToken);
@@ -86,12 +88,13 @@
             return await Task.Run(() => Query(path, useHeaderRow, sheetName, excelType, startCell, configuration), cancellationToken);
         }
 
-        public static async Task<IEnumerable<T>> QueryAsync<T>(this Stream stream, string sheetName = null, ExcelType excelType = ExcelType.UNKNOWN, string startCell = "A1", IConfiguration configuration = null, CancellationToken cancellationToken = default, bool hasHeader = true) where T : class, new()
+        public static async Task<IEnumerable<T>> QueryAsync<T>(this Stream stream, string sheetName = null, ExcelType excelType = ExcelType.UNKNOWN, string startCell = "A1", IConfiguration configuration = null, bool hasHeader = true, CancellationToken cancellationToken = default) where T : class, new()
         {
-            return await ExcelReaderFactory.GetProvider(stream, ExcelTypeHelper.GetExcelType(stream, excelType), configuration).QueryAsync<T>(sheetName, startCell, hasHeader, cancellationToken).ConfigureAwait(false);
+            var reader = await ExcelReaderFactory.GetProviderAsync(stream, ExcelTypeHelper.GetExcelType(stream, excelType), configuration);
+            return await reader.QueryAsync<T>(sheetName, startCell, hasHeader, cancellationToken).ConfigureAwait(false);
         }
 
-        public static async Task<IEnumerable<T>> QueryAsync<T>(string path, string sheetName = null, ExcelType excelType = ExcelType.UNKNOWN, string startCell = "A1", IConfiguration configuration = null, CancellationToken cancellationToken = default, bool hasHeader = true) where T : class, new()
+        public static async Task<IEnumerable<T>> QueryAsync<T>(string path, string sheetName = null, ExcelType excelType = ExcelType.UNKNOWN, string startCell = "A1", IConfiguration configuration = null, bool hasHeader = true, CancellationToken cancellationToken = default) where T : class, new()
         {
             return await Task.Run(() => Query<T>(path, sheetName, excelType, startCell, configuration, hasHeader), cancellationToken).ConfigureAwait(false);
         }
@@ -117,8 +120,60 @@
             }, cancellationToken);
 
             return await tcs.Task;
-
         }
+        
+#if NETCOREAPP3_0_OR_GREATER
+        public static async IAsyncEnumerable<dynamic> EnumerateAsync(string path, string sheetName = null, ExcelType excelType = ExcelType.UNKNOWN, string startCell = "A1", IConfiguration configuration = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var query = EnumerateAsync(fs, sheetName, excelType, startCell, configuration, cancellationToken);
+            
+            await foreach (var row in query.ConfigureAwait(false))
+            {
+                yield return row;
+            }
+        }
+        
+        public static async IAsyncEnumerable<dynamic> EnumerateAsync(this Stream stream, string sheetName = null, ExcelType excelType = ExcelType.UNKNOWN, string startCell = "A1", IConfiguration configuration = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            using var reader = await ExcelReaderFactory.GetProviderAsync(stream, ExcelTypeHelper.GetExcelType(stream, excelType), configuration);
+            var query = reader.EnumerateAsync(true, sheetName, startCell, cancellationToken);
+            
+            await foreach (var row in query.ConfigureAwait(false))
+            {
+                IDictionary<string, object> result = new ExpandoObject();
+                foreach (var prop in row)
+                {
+                    result.Add(prop);
+                }
+
+                yield return result;
+            }
+        }
+        
+        public static async IAsyncEnumerable<dynamic> EnumerateAsync<T>(string path, string sheetName = null, ExcelType excelType = ExcelType.UNKNOWN, string startCell = "A1", bool hasHeader = true, IConfiguration configuration = null, [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class, new()
+        {
+            await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var query = EnumerateAsync<T>(fs, sheetName, excelType, startCell, hasHeader, configuration, cancellationToken);
+            
+            await foreach (var row in query.ConfigureAwait(false))
+            {
+                yield return row;
+            }
+        }
+        
+        public static async IAsyncEnumerable<T> EnumerateAsync<T>(this Stream stream, string sheetName = null, ExcelType excelType = ExcelType.UNKNOWN, string startCell = "A1", bool hasHeader = true, IConfiguration configuration = null, [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class, new()
+        {
+            using var reader = await ExcelReaderFactory.GetProviderAsync(stream, ExcelTypeHelper.GetExcelType(stream, excelType), configuration);
+            var query = reader.EnumerateAsync<T>(sheetName, startCell, hasHeader, cancellationToken);
+            
+            await foreach (var row in query.ConfigureAwait(false))
+            {
+                yield return row;
+            }
+        }
+        #endif
+        
         public static async Task SaveAsByTemplateAsync(this Stream stream, string templatePath, object value, IConfiguration configuration = null, CancellationToken cancellationToken = default)
         {
             await ExcelTemplateFactory.GetProvider(stream, configuration).SaveAsByTemplateAsync(templatePath, value, cancellationToken).ConfigureAwait(false);

@@ -69,15 +69,24 @@ namespace MiniExcelLibs.OpenXml
         public int Insert(bool overwriteSheet = false)
         {
             if (!_configuration.FastMode)
-            {
                 throw new InvalidOperationException("Insert requires fast mode to be enabled");
-            }
 
-            var sheetRecords = new ExcelOpenXmlSheetReader(_stream, _configuration).GetWorkbookRels(_archive.Entries).ToArray();
-            foreach (var sheetRecord in sheetRecords.OrderBy(o => o.Id))
+            SheetRecord[] sheetRecords;
+            using (var reader = ExcelOpenXmlSheetReader.Create(_stream, _configuration))
             {
-                _sheets.Add(new SheetDto { Name = sheetRecord.Name, SheetIdx = (int)sheetRecord.Id, State = sheetRecord.State });
+                sheetRecords = reader.GetWorkbookRels(_archive.Entries).ToArray();
+                var dtos = sheetRecords
+                    .OrderBy(o => o.Id)
+                    .Select(r => new SheetDto
+                    {
+                        Name = r.Name,
+                        SheetIdx = (int)r.Id,
+                        State = r.State
+                    });
+
+                _sheets.AddRange(dtos);
             }
+            
             var existSheetDto = _sheets.SingleOrDefault(s => s.Name == _defaultSheetName);
             if (existSheetDto != null && !overwriteSheet)
             {

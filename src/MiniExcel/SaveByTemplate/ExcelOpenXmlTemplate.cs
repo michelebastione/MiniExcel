@@ -2,7 +2,6 @@
 using MiniExcelLibs.Zip;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -17,11 +16,13 @@ namespace MiniExcelLibs.OpenXml.SaveByTemplate
     internal partial class ExcelOpenXmlTemplate : IExcelTemplate, IExcelTemplateAsync
     {
 #if NET7_0_OR_GREATER
-        [GeneratedRegex("(?<={{).*?(?=}})")] private static partial Regex ExpressionRegex();
+        [GeneratedRegex("(?<={{).*?(?=}})")]
+        private static partial Regex ExpressionRegex();
+
         private static readonly Regex _isExpressionRegex = ExpressionRegex();
 #else
         private static readonly Regex _isExpressionRegex = new Regex("(?<={{).*?(?=}})");
-#endif 
+#endif
         private static readonly XmlNamespaceManager _ns;
 
         private readonly Stream _outputFileStream;
@@ -36,7 +37,8 @@ namespace MiniExcelLibs.OpenXml.SaveByTemplate
             _ns.AddNamespace("x14ac", Config.SpreadsheetmlXml_x14ac);
         }
 
-        public ExcelOpenXmlTemplate(Stream stream, IConfiguration configuration, InputValueExtractor inputValueExtractor)
+        public ExcelOpenXmlTemplate(Stream stream, IConfiguration configuration,
+            InputValueExtractor inputValueExtractor)
         {
             _outputFileStream = stream;
             _configuration = (OpenXmlConfiguration)configuration ?? OpenXmlConfiguration.DefaultConfig;
@@ -62,114 +64,114 @@ namespace MiniExcelLibs.OpenXml.SaveByTemplate
 
             // foreach all templateStream and create file for _outputFileStream and not create sheet file
             templateStream.Position = 0;
-            var templateReader = new ExcelOpenXmlSheetReader(templateStream, null);
-            var outputFileArchive = new ExcelOpenXmlZip(_outputFileStream, mode: ZipArchiveMode.Create, true, Encoding.UTF8, isUpdateMode: false);
-            try
+            using (var templateReader = ExcelOpenXmlSheetReader.Create(templateStream, null))
+            using (var outputFileArchive = new ExcelOpenXmlZip(_outputFileStream, mode: ZipArchiveMode.Create, true, Encoding.UTF8, isUpdateMode: false))
             {
-                outputFileArchive.entries = templateReader._archive.zipFile.Entries; //TODO:need to remove
-            }
-            catch (InvalidDataException e)
-            {
-                throw new InvalidDataException($"An invalid valid OpenXml zip archive was detected, please check or open an issue for this error: {e.Message}");
-            }
-
-            foreach (var entry in templateReader._archive.zipFile.Entries)
-            {
-                outputFileArchive._entries.Add(entry.FullName.Replace('\\', '/'), entry);
-            }
-            
-            templateStream.Position = 0;
-            using (var originalArchive = new ZipArchive(templateStream, ZipArchiveMode.Read))
-            {
-                // Create a new zip file for writing
-                //using (FileStream newZipStream = new FileStream(newZipPath, FileMode.Create))
-                //using (ZipArchive newArchive = new ZipArchive(_outputFileStream, ZipArchiveMode.Create))
-                
-                // Iterate through each entry in the original archive
-                foreach (ZipArchiveEntry entry in originalArchive.Entries)
+                try
                 {
-                    if (entry.FullName.StartsWith("xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase) ||
-                        entry.FullName.StartsWith("/xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase) ||
-                        entry.FullName.Contains("xl/calcChain.xml")
-                    )
-                        continue;
-                    
-                    // Create a new entry in the new archive with the same name
-                    var newEntry = outputFileArchive.zipFile.CreateEntry(entry.FullName);
-
-                    // Copy the content of the original entry to the new entry
-                    using (Stream originalEntryStream = entry.Open())
-                    using (Stream newEntryStream = newEntry.Open())
-                    {
-                        originalEntryStream.CopyTo(newEntryStream);
-                    }
+                    outputFileArchive.entries = templateReader.Archive.zipFile.Entries; //TODO:need to remove
+                }
+                catch (InvalidDataException e)
+                {
+                    throw new InvalidDataException($"An invalid valid OpenXml zip archive was detected, please check or open an issue for this error: {e.Message}");
                 }
 
-                //read sharedString
-                var templateSharedStrings = templateReader._sharedStrings;
+                foreach (var entry in templateReader.Archive.zipFile.Entries)
+                {
+                    outputFileArchive._entries.Add(entry.FullName.Replace('\\', '/'), entry);
+                }
+
                 templateStream.Position = 0;
-
-                //read all xlsx sheets
-                var templateSheets = templateReader._archive.zipFile.Entries
-                    .Where(w =>
-                        w.FullName.StartsWith("xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase) ||
-                        w.FullName.StartsWith("/xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase));
-
-                int sheetIdx = 0;
-                foreach (var templateSheet in templateSheets)
+                using (var originalArchive = new ZipArchive(templateStream, ZipArchiveMode.Read))
                 {
-                    //every time need to use new XRowInfos or it'll cause duplicate problem: https://user-images.githubusercontent.com/12729184/115003101-0fcab700-9ed8-11eb-9151-ca4d7b86d59e.png
-                    _xRowInfos = new List<XRowInfo>();
-                    _xMergeCellInfos = new Dictionary<string, XMergeCell>();
-                    _newXMergeCellInfos = new List<XMergeCell>();
+                    // Create a new zip file for writing
+                    //using (FileStream newZipStream = new FileStream(newZipPath, FileMode.Create))
+                    //using (ZipArchive newArchive = new ZipArchive(_outputFileStream, ZipArchiveMode.Create))
 
-                    var templateSheetStream = templateSheet.Open();
-                    var templateFullName = templateSheet.FullName;
-
-                    var inputValues = _inputValueExtractor.ToValueDictionary(value);
-                    var outputZipEntry = outputFileArchive.zipFile.CreateEntry(templateFullName);
-                    using (var outputZipSheetEntryStream = outputZipEntry.Open())
+                    // Iterate through each entry in the original archive
+                    foreach (var entry in originalArchive.Entries)
                     {
-                        GenerateSheetXmlImplByCreateMode(templateSheet, outputZipSheetEntryStream, templateSheetStream, inputValues, templateSharedStrings, false);
-                        //doc.Save(zipStream); //don't do it because: https://user-images.githubusercontent.com/12729184/114361127-61a5d100-9ba8-11eb-9bb9-34f076ee28a2.png
-                        // disposing writer disposes streams as well. read and parse calc functions before that
-                        sheetIdx++;
-                        _calcChainContent.Append(CalcChainHelper.GetCalcChainContent(_calcChainCellRefs, sheetIdx));
-                    }
-                }
+                        if (entry.FullName.StartsWith("xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase) ||
+                            entry.FullName.StartsWith("/xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase) ||
+                            entry.FullName.Contains("xl/calcChain.xml")
+                        )
+                            continue;
 
-                // create mode we need to not create first then create here
-                var calcChain = outputFileArchive.entries.FirstOrDefault(e => e.FullName.Contains("xl/calcChain.xml"));
-                if (calcChain != null)
-                {
-                    var calcChainPathName = calcChain.FullName;
-                    //calcChain.Delete();
+                        // Create a new entry in the new archive with the same name
+                        var newEntry = outputFileArchive.zipFile.CreateEntry(entry.FullName);
 
-                    var calcChainEntry = outputFileArchive.zipFile.CreateEntry(calcChainPathName);
-                    using (var calcChainStream = calcChainEntry.Open())
-                    {
-                        CalcChainHelper.GenerateCalcChainSheet(calcChainStream, _calcChainContent.ToString());
-                    }
-                }
-                else
-                {
-                    foreach (ZipArchiveEntry entry in originalArchive.Entries)
-                    {
-                        if (entry.FullName.Contains("xl/calcChain.xml"))
+                        // Copy the content of the original entry to the new entry
+                        using (var originalEntryStream = entry.Open())
+                        using (var newEntryStream = newEntry.Open())
                         {
-                            var newEntry = outputFileArchive.zipFile.CreateEntry(entry.FullName);
+                            originalEntryStream.CopyTo(newEntryStream);
+                        }
+                    }
 
-                            // Copy the content of the original entry to the new entry
-                            using (Stream originalEntryStream = entry.Open())
-                            using (Stream newEntryStream = newEntry.Open())
+                    //read sharedString
+                    var templateSharedStrings = templateReader.SharedStrings;
+                    templateStream.Position = 0;
+
+                    //read all xlsx sheets
+                    var templateSheets = templateReader.Archive.zipFile.Entries
+                        .Where(w =>
+                            w.FullName.StartsWith("xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase) ||
+                            w.FullName.StartsWith("/xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase));
+
+                    int sheetIdx = 0;
+                    foreach (var templateSheet in templateSheets)
+                    {
+                        //every time need to use new XRowInfos or it'll cause duplicate problem: https://user-images.githubusercontent.com/12729184/115003101-0fcab700-9ed8-11eb-9151-ca4d7b86d59e.png
+                        _xRowInfos = new List<XRowInfo>();
+                        _xMergeCellInfos = new Dictionary<string, XMergeCell>();
+                        _newXMergeCellInfos = new List<XMergeCell>();
+
+                        var templateSheetStream = templateSheet.Open();
+                        var templateFullName = templateSheet.FullName;
+
+                        var inputValues = _inputValueExtractor.ToValueDictionary(value);
+                        var outputZipEntry = outputFileArchive.zipFile.CreateEntry(templateFullName);
+                        using (var outputZipSheetEntryStream = outputZipEntry.Open())
+                        {
+                            GenerateSheetXmlImplByCreateMode(templateSheet, outputZipSheetEntryStream, templateSheetStream, inputValues, templateSharedStrings, false);
+                            //doc.Save(zipStream); //don't do it because: https://user-images.githubusercontent.com/12729184/114361127-61a5d100-9ba8-11eb-9bb9-34f076ee28a2.png
+                            // disposing writer disposes streams as well. read and parse calc functions before that
+                            sheetIdx++;
+                            _calcChainContent.Append(CalcChainHelper.GetCalcChainContent(_calcChainCellRefs, sheetIdx));
+                        }
+                    }
+
+                    // create mode we need to not create first then create here
+                    var calcChain = outputFileArchive.entries.FirstOrDefault(e => e.FullName.Contains("xl/calcChain.xml"));
+                    if (calcChain != null)
+                    {
+                        var calcChainPathName = calcChain.FullName;
+                        //calcChain.Delete();
+
+                        var calcChainEntry = outputFileArchive.zipFile.CreateEntry(calcChainPathName);
+                        using (var calcChainStream = calcChainEntry.Open())
+                        {
+                            CalcChainHelper.GenerateCalcChainSheet(calcChainStream, _calcChainContent.ToString());
+                        }
+                    }
+                    else
+                    {
+                        foreach (var entry in originalArchive.Entries)
+                        {
+                            if (entry.FullName.Contains("xl/calcChain.xml"))
                             {
-                                originalEntryStream.CopyTo(newEntryStream);
+                                var newEntry = outputFileArchive.zipFile.CreateEntry(entry.FullName);
+
+                                // Copy the content of the original entry to the new entry
+                                using (var originalEntryStream = entry.Open())
+                                using (var newEntryStream = newEntry.Open())
+                                {
+                                    originalEntryStream.CopyTo(newEntryStream);
+                                }
                             }
                         }
                     }
                 }
-
-                outputFileArchive.zipFile.Dispose();
             }
         }
 

@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Xml;
 
 namespace MiniExcelLibs.Utils
@@ -29,7 +30,16 @@ namespace MiniExcelLibs.Utils
                     break;
             }
         }
-
+        
+        public static async Task SkipToNextSameLevelDomAsync(XmlReader reader)
+        {
+            while (!reader.EOF)
+            {
+                if (! await SkipContentAsync(reader))
+                    break;
+            }
+        }
+        
         //Method from ExcelDataReader @MIT License
         public static bool ReadFirstContent(XmlReader reader)
         {
@@ -43,6 +53,19 @@ namespace MiniExcelLibs.Utils
             reader.Read();
             return true;
         }
+        
+        public static async Task<bool> ReadFirstContentAsync(XmlReader reader)
+        {
+            if (reader.IsEmptyElement)
+            {
+                await reader.ReadAsync();
+                return false;
+            }
+
+            await reader.MoveToContentAsync();
+            await reader.ReadAsync();
+            return true;
+        }
 
         //Method from ExcelDataReader @MIT License
         public static bool SkipContent(XmlReader reader)
@@ -54,6 +77,18 @@ namespace MiniExcelLibs.Utils
             }
 
             reader.Skip();
+            return true;
+        }
+        
+        public static async Task<bool> SkipContentAsync(XmlReader reader)
+        {
+            if (reader.NodeType == XmlNodeType.EndElement)
+            {
+                await reader.ReadAsync();
+                return false;
+            }
+
+            await reader.SkipAsync();
             return true;
         }
 
@@ -93,5 +128,31 @@ namespace MiniExcelLibs.Utils
                 }
             }
         }
+        
+#if NETCOREAPP3_0_OR_GREATER
+        public static async IAsyncEnumerable<string> GetSharedStringsAsync(Stream stream, params string[] nss)
+        {
+            using var reader = XmlReader.Create(stream);
+            
+            if (!IsStartElement(reader, "sst", nss))
+                yield break;
+
+            if (! await ReadFirstContentAsync(reader))
+                yield break;
+
+            while (!reader.EOF)
+            {
+                if (IsStartElement(reader, "si", nss))
+                {
+                    var value = await StringHelper.ReadStringItemAsync(reader);
+                    yield return value;
+                }
+                else if (! await SkipContentAsync(reader))
+                {
+                    break;
+                }
+            }
+        }
+#endif
     }
 }

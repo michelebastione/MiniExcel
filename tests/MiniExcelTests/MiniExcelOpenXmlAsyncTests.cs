@@ -1624,4 +1624,51 @@ public class MiniExcelOpenXmlAsyncTests
         Assert.True(results.Last().Column1 == "Github");
         Assert.True(results.Last().Column2 == 2);
     }
+    
+    [Fact]
+    public async Task TestAyncEnumerable()
+    {
+        var path = PathHelper.GetFile("xlsx/TestTypeMapping.xlsx");
+        
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var query = stream.EnumerateAsync();
+        
+        List<dynamic> rows = [];
+        await foreach (var row in query)
+        {
+            var a = row.Name;
+            rows.Add(row);
+        }
+        
+        Assert.Equal(100, rows.Count);
+        Assert.Equal("78DE23D2-DCB6-BD3D-EC67-C112BBC322A2", rows[0].ID);
+        Assert.Equal("Wade", rows[0].Name);
+        Assert.Equal("27/09/2020", rows[0].BoD);
+        Assert.Equal(36d, rows[0].Age);
+        Assert.Equal("False", rows[0].VIP);
+        Assert.Equal(5019.12d, rows[0].Points);
+    }
+    
+    [Fact]
+    public async Task TestAyncEnumerableStrongTyped()
+    {
+        var path = PathHelper.GetFile("xlsx/TestTypeMapping.xlsx");
+        
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var query = stream.EnumerateAsync<UserAccount>();
+
+        List<UserAccount> rows = [];
+        await foreach (var row in query)
+        {
+            rows.Add(row);
+        }
+        
+        Assert.Equal(100, rows.Count);
+        Assert.Equal(Guid.Parse("78DE23D2-DCB6-BD3D-EC67-C112BBC322A2"), rows[0].ID);
+        Assert.Equal("Wade", rows[0].Name);
+        Assert.Equal(new DateTime(2020, 9, 27), rows[0].BoD);
+        Assert.Equal(36, rows[0].Age);
+        Assert.False(rows[0].VIP);
+        Assert.Equal(5019.12m, rows[0].Points);
+    }
 }

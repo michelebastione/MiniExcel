@@ -231,7 +231,7 @@ namespace MiniExcelLibs
             var rows = ExcelReaderFactory.GetProvider(stream, ExcelTypeHelper.GetExcelType(stream, excelType), configuration).Query(false, sheetName, startCell);
 
             var columnDict = new Dictionary<string, string>();
-            foreach (IDictionary<string, object> row in rows)
+            foreach (var row in rows)
             {
                 if (first)
                 {
@@ -277,7 +277,10 @@ namespace MiniExcelLibs
             config = config ?? OpenXmlConfiguration.DefaultConfig;
 
             var archive = new ExcelOpenXmlZip(stream);
-            return new ExcelOpenXmlSheetReader(stream, config).GetWorkbookRels(archive.entries).Select(s => s.Name).ToList();
+            return ExcelOpenXmlSheetReader.Create(stream, config)
+                .GetWorkbookRels(archive.entries)
+                .Select(s => s.Name)
+                .ToList();
         }
 
         public static List<SheetInfo> GetSheetInformations(string path, OpenXmlConfiguration config = null)
@@ -291,7 +294,10 @@ namespace MiniExcelLibs
             config = config ?? OpenXmlConfiguration.DefaultConfig;
 
             var archive = new ExcelOpenXmlZip(stream);
-            return new ExcelOpenXmlSheetReader(stream, config).GetWorkbookRels(archive.entries).Select((s, i) => s.ToSheetInfo((uint)i)).ToList();
+            return ExcelOpenXmlSheetReader.Create(stream, config)
+                .GetWorkbookRels(archive.entries)
+                .Select((s, i) => s.ToSheetInfo((uint)i))
+                .ToList();
         }
 
         public static ICollection<string> GetColumns(string path, bool useHeaderRow = false, string sheetName = null, ExcelType excelType = ExcelType.UNKNOWN, string startCell = "A1", IConfiguration configuration = null)
@@ -302,7 +308,8 @@ namespace MiniExcelLibs
 
         public static ICollection<string> GetColumns(this Stream stream, bool useHeaderRow = false, string sheetName = null, ExcelType excelType = ExcelType.UNKNOWN, string startCell = "A1", IConfiguration configuration = null)
         {
-            return (Query(stream, useHeaderRow, sheetName, excelType, startCell, configuration).FirstOrDefault() as IDictionary<string, object>)?.Keys;
+            var firstRow = Query(stream, useHeaderRow, sheetName, excelType, startCell, configuration).FirstOrDefault(); 
+            return (firstRow as IDictionary<string, object>)?.Keys;
         }
 
         public static IList<ExcelRange> GetSheetDimensions(string path)
@@ -313,7 +320,7 @@ namespace MiniExcelLibs
 
         public static IList<ExcelRange> GetSheetDimensions(this Stream stream)
         {
-            return new ExcelOpenXmlSheetReader(stream, null).GetDimensions();
+            return ExcelOpenXmlSheetReader.Create(stream, null).GetDimensions();
         }
 
         public static void ConvertCsvToXlsx(string csv, string xlsx)

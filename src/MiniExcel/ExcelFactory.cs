@@ -1,11 +1,12 @@
-﻿namespace MiniExcelLibs
-{
-    using MiniExcelLibs.Csv;
-    using MiniExcelLibs.OpenXml;
-    using MiniExcelLibs.OpenXml.SaveByTemplate;
-    using System;
-    using System.IO;
+﻿using MiniExcelLibs.Csv;
+using MiniExcelLibs.OpenXml;
+using MiniExcelLibs.OpenXml.SaveByTemplate;
+using System;
+using System.IO;
+using System.Threading.Tasks;
 
+namespace MiniExcelLibs
+{
     internal static class ExcelReaderFactory
     {
         internal static IExcelReader GetProvider(Stream stream, ExcelType excelType, IConfiguration configuration)
@@ -15,13 +16,29 @@
                 case ExcelType.CSV:
                     return new CsvReader(stream, configuration);
                 case ExcelType.XLSX:
-                    return new ExcelOpenXmlSheetReader(stream, configuration);
+                    return ExcelOpenXmlSheetReader.Create(stream, configuration); 
+                default:
+                    throw new NotSupportedException("Something went wrong. Please report this issue you are experiencing with MiniExcel.");
+            }
+        }
+        
+        internal static async Task<IExcelReader> GetProviderAsync(Stream stream, ExcelType excelType, IConfiguration configuration)
+        {
+            switch (excelType)
+            {
+                case ExcelType.CSV:
+                    return await Task.FromResult<IExcelReader>(new CsvReader(stream, configuration));
+                case ExcelType.XLSX:
+#if NETCOREAPP3_0_OR_GREATER
+                    return await ExcelOpenXmlSheetReader.CreateAsync(stream, configuration);
+#else
+                    return await Task.FromResult<IExcelReader>(ExcelOpenXmlSheetReader.Create(stream, configuration));
+#endif
                 default:
                     throw new NotSupportedException("Something went wrong. Please report this issue you are experiencing with MiniExcel.");
             }
         }
     }
-
     internal static class ExcelWriterFactory
     {
         internal static IExcelWriter GetProvider(Stream stream, object value, string sheetName, ExcelType excelType, IConfiguration configuration, bool printHeader)

@@ -8,38 +8,47 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Xml;
 
 namespace MiniExcelLibs.OpenXml
 {
     internal partial class ExcelOpenXmlSheetReader : IExcelReader
     {
-        private bool _disposed = false;
-        private static readonly string[] _ns = { Config.SpreadsheetmlXmlns, Config.SpreadsheetmlXmlStrictns };
-        private static readonly string[] _relationshiopNs = { Config.SpreadsheetmlXmlRelationshipns, Config.SpreadsheetmlXmlStrictRelationshipns };
-        private List<SheetRecord> _sheetRecords;
-        internal IDictionary<int, string> _sharedStrings;
-        private MergeCells _mergeCells;
-        private ExcelOpenXmlStyles _style;
-        internal readonly ExcelOpenXmlZip _archive;
+        private bool _disposed;
+        
+        private static readonly string[] Ns = { Config.SpreadsheetmlXmlns, Config.SpreadsheetmlXmlStrictns };
+        private static readonly string[] RelationshiopNs = { Config.SpreadsheetmlXmlRelationshipns, Config.SpreadsheetmlXmlStrictRelationshipns };
+        
         private readonly OpenXmlConfiguration _config;
+        private List<SheetRecord> _sheetRecords;
+        private ExcelOpenXmlStyles _style;
+        private MergeCells _mergeCells;
+        
+        internal readonly ExcelOpenXmlZip Archive;
+        internal IDictionary<int, string> SharedStrings;
 
-        private static readonly XmlReaderSettings _xmlSettings = new XmlReaderSettings
+        private readonly XmlReaderSettings _xmlSettings = new XmlReaderSettings
         {
             IgnoreComments = true,
             IgnoreWhitespace = true,
             XmlResolver = null
         };
 
-        public ExcelOpenXmlSheetReader(Stream stream, IConfiguration configuration, bool isUpdateMode = true)
+        private ExcelOpenXmlSheetReader(Stream stream, IConfiguration configuration, bool isUpdateMode, bool asynchronous = false)
         {
-            _archive = new ExcelOpenXmlZip(stream);
+            Archive = new ExcelOpenXmlZip(stream);
             _config = (OpenXmlConfiguration)configuration ?? OpenXmlConfiguration.DefaultConfig;
-            SetSharedStrings();
+            _xmlSettings.Async = asynchronous;
         }
 
+        public static ExcelOpenXmlSheetReader Create(Stream stream, IConfiguration configuration, bool isUpdateMode = true)
+        {
+            var reader = new ExcelOpenXmlSheetReader(stream, configuration, isUpdateMode, false);
+            reader.SetSharedStrings();
+
+            return reader;
+        }
+        
         public IEnumerable<IDictionary<string, object>> Query(bool useHeaderRow, string sheetName, string startCell)
         {
             return QueryRange(useHeaderRow, sheetName, startCell, "");
@@ -47,21 +56,16 @@ namespace MiniExcelLibs.OpenXml
 
         public IEnumerable<T> Query<T>(string sheetName, string startCell, bool hasHeader) where T : class, new()
         {
-            if (sheetName == null)
-                sheetName = CustomPropertyHelper.GetExcellSheetInfo(typeof(T), _config)?.ExcelSheetName;
-
-            //Todo: Find a way if possible to remove the 'hasHeader' parameter to check whether or not to include
-            // the first row in the result set in favor of modifying the already present 'useHeaderRow' to do the same job          
+            sheetName = sheetName ?? CustomPropertyHelper.GetExcellSheetInfo(typeof(T), _config)?.ExcelSheetName;
             return QueryImpl<T>(Query(false, sheetName, startCell), startCell, hasHeader, _config);
         }
 
         public IEnumerable<IDictionary<string, object>> QueryRange(bool useHeaderRow, string sheetName, string startCell, string endCell)
         {
-            if (!ReferenceHelper.ParseReference(startCell, out var startColumnIndex, out var startRowIndex))
-            {
-                throw new InvalidDataException($"Value {startCell} is not a valid cell reference.");
-            }
             // convert to 0-based
+            if (!ReferenceHelper.ParseReference(startCell, out var startColumnIndex, out var startRowIndex))
+                throw new InvalidDataException($"Value {startCell} is not a valid cell reference.");
+            
             startColumnIndex--;
             startRowIndex--;
 
@@ -71,33 +75,29 @@ namespace MiniExcelLibs.OpenXml
             if (!string.IsNullOrWhiteSpace(endCell))
             {
                 if (!ReferenceHelper.ParseReference(endCell, out int cIndex, out int rIndex))
-                {
                     throw new InvalidDataException($"Value {endCell} is not a valid cell reference.");
-                }
 
                 // convert to 0-based
                 endColumnIndex = cIndex - 1;
                 endRowIndex = rIndex - 1;
             }
 
-            return InternalQueryRange(useHeaderRow, sheetName, startRowIndex, startColumnIndex, endRowIndex, endColumnIndex);
+            return QueryRangeInternal(useHeaderRow, sheetName, startRowIndex, startColumnIndex, endRowIndex, endColumnIndex);
         }
 
         public IEnumerable<T> QueryRange<T>(string sheetName, string startCell, string endCell, bool hasHeader) where T : class, new()
         {
-            return QueryImpl<T>(QueryRange(false, sheetName, startCell, endCell), startCell, hasHeader, this._config);
+            return QueryImpl<T>(QueryRange(false, sheetName, startCell, endCell), startCell, hasHeader, _config);
         }
 
         public IEnumerable<IDictionary<string, object>> QueryRange(bool useHeaderRow, string sheetName, int startRowIndex, int startColumnIndex, int? endRowIndex, int? endColumnIndex)
         {
             if (startRowIndex <= 0)
-            {
                 throw new ArgumentOutOfRangeException(nameof(startRowIndex), "Start row index is 1-based and must be greater than 0.");
-            }
+            
             if (startColumnIndex <= 0)
-            {
                 throw new ArgumentOutOfRangeException(nameof(startColumnIndex), "Start column index is 1-based and must be greater than 0.");
-            }
+            
             // convert to 0-based
             startColumnIndex--;
             startRowIndex--;
@@ -105,46 +105,44 @@ namespace MiniExcelLibs.OpenXml
             if (endRowIndex.HasValue)
             {
                 if (endRowIndex.Value <= 0)
-                {
                     throw new ArgumentOutOfRangeException(nameof(endRowIndex), "End row index is 1-based and must be greater than 0.");
-                }
+                
                 // convert to 0-based
                 endRowIndex--;
             }
+            
             if (endColumnIndex.HasValue)
             {
                 if (endColumnIndex.Value <= 0)
-                {
                     throw new ArgumentOutOfRangeException(nameof(endColumnIndex), "End column index is 1-based and must be greater than 0.");
-                }
+                
                 // convert to 0-based
                 endColumnIndex--;
             }
 
-            return InternalQueryRange(useHeaderRow, sheetName, startRowIndex, startColumnIndex, endRowIndex, endColumnIndex);
+            return QueryRangeInternal(useHeaderRow, sheetName, startRowIndex, startColumnIndex, endRowIndex, endColumnIndex);
         }
 
         public IEnumerable<T> QueryRange<T>(string sheetName, int startRowIndex, int startColumnIndex, int? endRowIndex, int? endColumnIndex, bool hasHeader) where T : class, new()
         {
-            return QueryImpl<T>(QueryRange(false, sheetName, startRowIndex, startColumnIndex, endRowIndex, endColumnIndex), ReferenceHelper.ConvertXyToCell(startColumnIndex, startRowIndex), hasHeader, _config);
+            var cellValue = ReferenceHelper.ConvertXyToCell(startColumnIndex, startRowIndex);
+            var rows = QueryRange(false, sheetName, startRowIndex, startColumnIndex, endRowIndex, endColumnIndex);
+            
+            return QueryImpl<T>(rows, cellValue, hasHeader, _config);
         }
 
-        internal IEnumerable<IDictionary<string, object>> InternalQueryRange(bool useHeaderRow, string sheetName, int startRowIndex, int startColumnIndex, int? endRowIndex, int? endColumnIndex)
+        private IEnumerable<IDictionary<string, object>> QueryRangeInternal(bool useHeaderRow, string sheetName, int startRowIndex, int startColumnIndex, int? endRowIndex, int? endColumnIndex)
         {
             var sheetEntry = GetSheetEntry(sheetName);
 
             // TODO: need to optimize performance
             // Q. why need 3 times openstream merge one open read? A. no, zipstream can't use position = 0
 
-            if (_config.FillMergedCells && !TryGetMergeCells(sheetEntry, out _mergeCells))
-            {
+            if (_config.FillMergedCells && !TryGetMergeCells(sheetEntry, _xmlSettings, out _mergeCells))
                 yield break;
-            }
 
-            if (!TryGetMaxRowColumnIndex(sheetEntry, out var withoutCR, out var maxRowIndex, out var maxColumnIndex))
-            {
+            if (!TryGetMaxRowColumnIndex(sheetEntry, _xmlSettings, out var withoutCr, out var maxRowIndex, out var maxColumnIndex))
                 yield break;
-            }
 
             if (endColumnIndex.HasValue)
             {
@@ -154,7 +152,7 @@ namespace MiniExcelLibs.OpenXml
             using (var sheetStream = sheetEntry.Open())
             using (var reader = XmlReader.Create(sheetStream, _xmlSettings))
             {
-                if (!XmlReaderHelper.IsStartElement(reader, "worksheet", _ns))
+                if (!XmlReaderHelper.IsStartElement(reader, "worksheet", Ns))
                     yield break;
 
                 if (!XmlReaderHelper.ReadFirstContent(reader))
@@ -162,7 +160,7 @@ namespace MiniExcelLibs.OpenXml
 
                 while (!reader.EOF)
                 {
-                    if (XmlReaderHelper.IsStartElement(reader, "sheetData", _ns))
+                    if (XmlReaderHelper.IsStartElement(reader, "sheetData", Ns))
                     {
                         if (!XmlReaderHelper.ReadFirstContent(reader))
                             continue;
@@ -172,7 +170,7 @@ namespace MiniExcelLibs.OpenXml
                         bool isFirstRow = true;
                         while (!reader.EOF)
                         {
-                            if (XmlReaderHelper.IsStartElement(reader, "row", _ns))
+                            if (XmlReaderHelper.IsStartElement(reader, "row", Ns))
                             {
                                 var nextRowIndex = rowIndex + 1;
                                 if (int.TryParse(reader.GetAttribute("r"), out int arValue))
@@ -215,15 +213,15 @@ namespace MiniExcelLibs.OpenXml
                                 #region Set Cells
 
                                 var cell = GetCell(useHeaderRow, maxColumnIndex, headRows, startColumnIndex);
-                                var columnIndex = withoutCR ? -1 : 0;
+                                var columnIndex = withoutCr ? -1 : 0;
                                 while (!reader.EOF)
                                 {
-                                    if (XmlReaderHelper.IsStartElement(reader, "c", _ns))
+                                    if (XmlReaderHelper.IsStartElement(reader, "c", Ns))
                                     {
                                         var aS = reader.GetAttribute("s");
                                         var aR = reader.GetAttribute("r");
                                         var aT = reader.GetAttribute("t");
-                                        var cellValue = ReadCellAndSetColumnIndex(reader, ref columnIndex, withoutCR,
+                                        var cellValue = ReadCellAndSetColumnIndex(reader, ref columnIndex, withoutCr,
                                             startColumnIndex, aR, aT);
 
                                         if (_config.FillMergedCells)
@@ -244,21 +242,23 @@ namespace MiniExcelLibs.OpenXml
                                         if (!string.IsNullOrEmpty(aS)) // if c with s meaning is custom style need to check type by xl/style.xml
                                         {
                                             int xfIndex = -1;
-                                            if (int.TryParse(aS, NumberStyles.Any, CultureInfo.InvariantCulture,
-                                                    out var styleIndex))
+                                            if (int.TryParse(aS, NumberStyles.Any, CultureInfo.InvariantCulture, out var styleIndex))
+                                            {
                                                 xfIndex = styleIndex;
+                                            }
 
                                             // only when have s attribute then load styles xml data
-                                            if (_style == null)
-                                                _style = new ExcelOpenXmlStyles(_archive);
+                                            _style = _style ?? new ExcelOpenXmlStyles(Archive);
 
                                             cellValue = _style.ConvertValueByStyleFormat(xfIndex, cellValue);
                                         }
 
-                                        SetCellsValueAndHeaders(cellValue, useHeaderRow, ref headRows, ref isFirstRow, ref cell, columnIndex);
+                                        SetCellsValueAndHeaders(cellValue, useHeaderRow, headRows, isFirstRow, cell, columnIndex);
                                     }
                                     else if (!XmlReaderHelper.SkipContent(reader))
+                                    {
                                         break;
+                                    }
                                 }
 
                                 #endregion
@@ -286,6 +286,8 @@ namespace MiniExcelLibs.OpenXml
             }
         }
 
+        //Todo: Find a way if possible to remove the 'hasHeader' parameter to check whether or not to include
+        // the first row in the result set in favor of modifying the already present 'useHeaderRow' to do the same job    
         public static IEnumerable<T> QueryImpl<T>(IEnumerable<IDictionary<string, object>> values, string startCell, bool hasHeader, Configuration configuration) where T : class, new()
         {
             var type = typeof(T);
@@ -358,13 +360,15 @@ namespace MiniExcelLibs.OpenXml
         private ZipArchiveEntry GetSheetEntry(string sheetName)
         {
             // if sheets count > 1 need to read xl/_rels/workbook.xml.rels
-            var sheets = _archive.entries
-                .Where(w => w.FullName.StartsWith("xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase) || w.FullName.StartsWith("/xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase))
+            var sheets = Archive.entries
+                .Where(w => w.FullName.StartsWith("xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase) ||
+                            w.FullName.StartsWith("/xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase))
                 .ToArray();
-            ZipArchiveEntry sheetEntry = null;
+            
+            ZipArchiveEntry sheetEntry;
             if (sheetName != null)
             {
-                SetWorkbookRels(_archive.entries);
+                SetWorkbookRels(Archive.entries);
                 var sheetRecord = _sheetRecords.SingleOrDefault(s => s.Name == sheetName);
                 if (sheetRecord == null)
                 {
@@ -377,26 +381,35 @@ namespace MiniExcelLibs.OpenXml
                         sheetRecord = _sheetRecords.SingleOrDefault(s => s.Name == sheetConfig.Name);
                     }
                 }
-                sheetEntry = sheets.Single(w => w.FullName == $"xl/{sheetRecord.Path}" || w.FullName == $"/xl/{sheetRecord.Path}" || w.FullName == sheetRecord.Path || sheetRecord.Path == $"/{w.FullName}");
+                sheetEntry = sheets.Single(w => w.FullName == $"xl/{sheetRecord?.Path}" || 
+                                                w.FullName == $"/xl/{sheetRecord?.Path}" || 
+                                                w.FullName == sheetRecord?.Path || 
+                                                sheetRecord?.Path == $"/{w.FullName}");
             }
             else if (sheets.Length > 1)
             {
-                SetWorkbookRels(_archive.entries);
+                SetWorkbookRels(Archive.entries);
                 var s = _sheetRecords[0];
-                sheetEntry = sheets.Single(w => w.FullName == $"xl/{s.Path}" || w.FullName == $"/xl/{s.Path}" || w.FullName.TrimStart('/') == s.Path.TrimStart('/'));
+                sheetEntry = sheets.Single(w => w.FullName == $"xl/{s.Path}" || 
+                                                w.FullName == $"/xl/{s.Path}" || 
+                                                w.FullName.TrimStart('/') == s.Path.TrimStart('/'));
             }
             else
+            {
                 sheetEntry = sheets.Single();
+            }
 
             return sheetEntry;
         }
 
         private static IDictionary<string, object> GetCell(bool useHeaderRow, int maxColumnIndex, Dictionary<int, string> headRows, int startColumnIndex)
         {
-            return useHeaderRow ? CustomPropertyHelper.GetEmptyExpandoObject(headRows) : CustomPropertyHelper.GetEmptyExpandoObject(maxColumnIndex, startColumnIndex);
+            return useHeaderRow 
+                ? CustomPropertyHelper.GetEmptyExpandoObject(headRows) 
+                : CustomPropertyHelper.GetEmptyExpandoObject(maxColumnIndex, startColumnIndex);
         }
 
-        private static void SetCellsValueAndHeaders(object cellValue, bool useHeaderRow, ref Dictionary<int, string> headRows, ref bool isFirstRow, ref IDictionary<string, object> cell, int columnIndex)
+        private static void SetCellsValueAndHeaders(object cellValue, bool useHeaderRow, Dictionary<int, string> headRows, bool isFirstRow, IDictionary<string, object> cell, int columnIndex)
         {
             if (!useHeaderRow)
             {
@@ -419,40 +432,40 @@ namespace MiniExcelLibs.OpenXml
 
         private void SetSharedStrings()
         {
-            if (_sharedStrings != null)
+            if (SharedStrings != null)
                 return;
-            var sharedStringsEntry = _archive.GetEntry("xl/sharedStrings.xml");
+            
+            var sharedStringsEntry = Archive.GetEntry("xl/sharedStrings.xml");
             if (sharedStringsEntry == null)
                 return;
+            
             using (var stream = sharedStringsEntry.Open())
             {
                 var idx = 0;
                 if (_config.EnableSharedStringCache && sharedStringsEntry.Length >= _config.SharedStringCacheSize)
                 {
-                    _sharedStrings = new SharedStringsDiskCache();
-                    foreach (var sharedString in XmlReaderHelper.GetSharedStrings(stream, _ns))
-                        _sharedStrings[idx++] = sharedString;
+                    SharedStrings = new SharedStringsDiskCache();
+                    foreach (var sharedString in XmlReaderHelper.GetSharedStrings(stream, Ns))
+                        SharedStrings[idx++] = sharedString;
                 }
-                else if (_sharedStrings == null)
+                else if (SharedStrings == null)
                 {
-                    _sharedStrings = XmlReaderHelper.GetSharedStrings(stream, _ns).ToDictionary((x) => idx++, x => x);
+                    SharedStrings = XmlReaderHelper.GetSharedStrings(stream, Ns).ToDictionary(x => idx++, x => x);
                 }
             }
         }
 
         private void SetWorkbookRels(ReadOnlyCollection<ZipArchiveEntry> entries)
         {
-            if (_sheetRecords != null)
-                return;
-            _sheetRecords = GetWorkbookRels(entries);
+            _sheetRecords = _sheetRecords ?? GetWorkbookRels(entries);
         }
 
-        internal static IEnumerable<SheetRecord> ReadWorkbook(ReadOnlyCollection<ZipArchiveEntry> entries)
+        private static IEnumerable<SheetRecord> ReadWorkbook(ReadOnlyCollection<ZipArchiveEntry> entries, XmlReaderSettings settings)
         {
             using (var stream = entries.Single(w => w.FullName == "xl/workbook.xml").Open())
-            using (var reader = XmlReader.Create(stream, _xmlSettings))
+            using (var reader = XmlReader.Create(stream, settings))
             {
-                if (!XmlReaderHelper.IsStartElement(reader, "workbook", _ns))
+                if (!XmlReaderHelper.IsStartElement(reader, "workbook", Ns))
                     yield break;
 
                 if (!XmlReaderHelper.ReadFirstContent(reader))
@@ -461,30 +474,30 @@ namespace MiniExcelLibs.OpenXml
                 var activeSheetIndex = 0;
                 while (!reader.EOF)
                 {
-                    if (XmlReaderHelper.IsStartElement(reader, "bookViews", _ns))
+                    if (XmlReaderHelper.IsStartElement(reader, "bookViews", Ns))
                     {
-                        if (!XmlReaderHelper.ReadFirstContent(reader))
-                            continue;
-
-                        while (!reader.EOF)
+                        if (XmlReaderHelper.ReadFirstContent(reader))
                         {
-                            if (XmlReaderHelper.IsStartElement(reader, "workbookView", _ns))
+                            while (!reader.EOF)
                             {
-                                var activeSheet = reader.GetAttribute("activeTab");
-                                if (int.TryParse(activeSheet, out var index))
+                                if (XmlReaderHelper.IsStartElement(reader, "workbookView", Ns))
                                 {
-                                    activeSheetIndex = index;
-                                }
+                                    var activeSheet = reader.GetAttribute("activeTab");
+                                    if (int.TryParse(activeSheet, out var index))
+                                    {
+                                        activeSheetIndex = index;
+                                    }
 
-                                reader.Skip();
-                            }
-                            else if (!XmlReaderHelper.SkipContent(reader))
-                            {
-                                break;
+                                    reader.Skip();
+                                }
+                                else if (!XmlReaderHelper.SkipContent(reader))
+                                {
+                                    break;
+                                }
                             }
                         }
                     }
-                    else if (XmlReaderHelper.IsStartElement(reader, "sheets", _ns))
+                    else if (XmlReaderHelper.IsStartElement(reader, "sheets", Ns))
                     {
                         if (!XmlReaderHelper.ReadFirstContent(reader))
                             continue;
@@ -492,15 +505,16 @@ namespace MiniExcelLibs.OpenXml
                         var sheetCount = 0;
                         while (!reader.EOF)
                         {
-                            if (XmlReaderHelper.IsStartElement(reader, "sheet", _ns))
+                            if (XmlReaderHelper.IsStartElement(reader, "sheet", Ns))
                             {
                                 yield return new SheetRecord(
                                     reader.GetAttribute("name"),
                                     reader.GetAttribute("state"),
                                     uint.Parse(reader.GetAttribute("sheetId")),
-                                    XmlReaderHelper.GetAttribute(reader, "id", _relationshiopNs),
+                                    XmlReaderHelper.GetAttribute(reader, "id", RelationshiopNs),
                                     sheetCount == activeSheetIndex
                                 );
+                                
                                 sheetCount++;
                                 reader.Skip();
                             }
@@ -520,7 +534,7 @@ namespace MiniExcelLibs.OpenXml
 
         internal List<SheetRecord> GetWorkbookRels(ReadOnlyCollection<ZipArchiveEntry> entries)
         {
-            var sheetRecords = ReadWorkbook(entries).ToList();
+            var sheetRecords = ReadWorkbook(entries, _xmlSettings).ToList();
 
             using (var stream = entries.Single(w => w.FullName == "xl/_rels/workbook.xml.rels").Open())
             using (var reader = XmlReader.Create(stream, _xmlSettings))
@@ -536,13 +550,10 @@ namespace MiniExcelLibs.OpenXml
                     if (XmlReaderHelper.IsStartElement(reader, "Relationship", "http://schemas.openxmlformats.org/package/2006/relationships"))
                     {
                         var rid = reader.GetAttribute("Id");
-                        foreach (var sheet in sheetRecords)
+                        foreach (var sheet in sheetRecords.Where(sheet => sheet.Rid == rid))
                         {
-                            if (sheet.Rid == rid)
-                            {
-                                sheet.Path = reader.GetAttribute("Target");
-                                break;
-                            }
+                            sheet.Path = reader.GetAttribute("Target");
+                            break;
                         }
 
                         reader.Skip();
@@ -557,12 +568,12 @@ namespace MiniExcelLibs.OpenXml
             return sheetRecords;
         }
 
-        private object ReadCellAndSetColumnIndex(XmlReader reader, ref int columnIndex, bool withoutCR, int startColumnIndex, string aR, string aT)
+        private object ReadCellAndSetColumnIndex(XmlReader reader, ref int columnIndex, bool withoutCr, int startColumnIndex, string aR, string aT)
         {
             const int xfIndex = -1;
             int newColumnIndex;
 
-            if (withoutCR)
+            if (withoutCr)
                 newColumnIndex = columnIndex + 1;
 
             //TODO:need to check only need nextColumnIndex or columnIndex
@@ -575,12 +586,14 @@ namespace MiniExcelLibs.OpenXml
 
             if (columnIndex < startColumnIndex)
             {
-                if (!XmlReaderHelper.ReadFirstContent(reader))
-                    return null;
-
-                while (!reader.EOF)
-                    if (!XmlReaderHelper.SkipContent(reader))
-                        break;
+                if (XmlReaderHelper.ReadFirstContent(reader))
+                {
+                    while (!reader.EOF)
+                    {
+                        if (!XmlReaderHelper.SkipContent(reader))
+                            break;
+                    }
+                }
 
                 return null;
             }
@@ -591,13 +604,13 @@ namespace MiniExcelLibs.OpenXml
             object value = null;
             while (!reader.EOF)
             {
-                if (XmlReaderHelper.IsStartElement(reader, "v", _ns))
+                if (XmlReaderHelper.IsStartElement(reader, "v", Ns))
                 {
                     var rawValue = reader.ReadElementContentAsString();
                     if (!string.IsNullOrEmpty(rawValue))
                         ConvertCellValue(rawValue, aT, xfIndex, out value);
                 }
-                else if (XmlReaderHelper.IsStartElement(reader, "is", _ns))
+                else if (XmlReaderHelper.IsStartElement(reader, "is", Ns))
                 {
                     var rawValue = StringHelper.ReadStringItem(reader);
                     if (!string.IsNullOrEmpty(rawValue))
@@ -622,10 +635,10 @@ namespace MiniExcelLibs.OpenXml
                 case "s":
                     if (int.TryParse(rawValue, style, invariantCulture, out var sstIndex))
                     {
-                        if (sstIndex >= 0 && sstIndex < _sharedStrings.Count)
+                        if (sstIndex >= 0 && sstIndex < SharedStrings.Count)
                         {
                             //value = Helpers.ConvertEscapeChars(_SharedStrings[sstIndex]);
-                            value = XmlEncoder.DecodeString(_sharedStrings[sstIndex]);
+                            value = XmlEncoder.DecodeString(SharedStrings[sstIndex]);
                             return;
                         }
                     }
@@ -642,7 +655,7 @@ namespace MiniExcelLibs.OpenXml
                         if (v != null && v.StartsWith("@@@fileid@@@,", StringComparison.Ordinal))
                         {
                             var path = v.Substring(13);
-                            var entry = _archive.GetEntry(path);
+                            var entry = Archive.GetEntry(path);
                             var bytes = new byte[entry.Length];
 
                             using (var stream = entry.Open())
@@ -697,7 +710,7 @@ namespace MiniExcelLibs.OpenXml
         {
             var ranges = new List<ExcelRange>();
 
-            var sheets = _archive.entries.Where(e =>
+            var sheets = Archive.entries.Where(e =>
                 e.FullName.StartsWith("xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase) ||
                 e.FullName.StartsWith("/xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase));
 
@@ -709,14 +722,14 @@ namespace MiniExcelLibs.OpenXml
                 string startCell = null;
                 string endCell = null;
 
-                var withoutCR = false;
+                var withoutCr = false;
 
                 using (var sheetStream = sheet.Open())
                 using (var reader = XmlReader.Create(sheetStream, _xmlSettings))
                 {
                     while (reader.Read())
                     {
-                        if (XmlReaderHelper.IsStartElement(reader, "c", _ns))
+                        if (XmlReaderHelper.IsStartElement(reader, "c", Ns))
                         {
                             var r = reader.GetAttribute("r");
                             if (r != null)
@@ -731,12 +744,12 @@ namespace MiniExcelLibs.OpenXml
                             }
                             else
                             {
-                                withoutCR = true;
+                                withoutCr = true;
                                 break;
                             }
                         }
 
-                        else if (XmlReaderHelper.IsStartElement(reader, "dimension", _ns))
+                        else if (XmlReaderHelper.IsStartElement(reader, "dimension", Ns))
                         {
                             var refAttr = reader.GetAttribute("ref");
                             if (string.IsNullOrEmpty(refAttr))
@@ -757,12 +770,12 @@ namespace MiniExcelLibs.OpenXml
                     }
                 }
 
-                if (withoutCR)
+                if (withoutCr)
                 {
                     using (var sheetStream = sheet.Open())
                     using (var reader = XmlReader.Create(sheetStream, _xmlSettings))
                     {
-                        if (!XmlReaderHelper.IsStartElement(reader, "worksheet", _ns))
+                        if (!XmlReaderHelper.IsStartElement(reader, "worksheet", Ns))
                             throw new InvalidDataException("No worksheet data found for the sheet");
 
                         if (!XmlReaderHelper.ReadFirstContent(reader))
@@ -770,36 +783,36 @@ namespace MiniExcelLibs.OpenXml
 
                         while (!reader.EOF)
                         {
-                            if (XmlReaderHelper.IsStartElement(reader, "sheetData", _ns))
+                            if (XmlReaderHelper.IsStartElement(reader, "sheetData", Ns))
                             {
-                                if (!XmlReaderHelper.ReadFirstContent(reader))
-                                    continue;
-
-                                while (!reader.EOF)
+                                if (XmlReaderHelper.ReadFirstContent(reader))
                                 {
-                                    if (XmlReaderHelper.IsStartElement(reader, "row", _ns))
+                                    while (!reader.EOF)
                                     {
-                                        maxRowIndex++;
-
-                                        if (!XmlReaderHelper.ReadFirstContent(reader))
-                                            continue;
-
-                                        var cellIndex = -1;
-                                        while (!reader.EOF)
+                                        if (XmlReaderHelper.IsStartElement(reader, "row", Ns))
                                         {
-                                            if (XmlReaderHelper.IsStartElement(reader, "c", _ns))
-                                            {
-                                                cellIndex++;
-                                                maxColumnIndex = Math.Max(maxColumnIndex, cellIndex);
-                                            }
+                                            maxRowIndex++;
 
-                                            if (!XmlReaderHelper.SkipContent(reader))
-                                                break;
+                                            if (XmlReaderHelper.ReadFirstContent(reader))
+                                            {
+                                                var cellIndex = -1;
+                                                while (!reader.EOF)
+                                                {
+                                                    if (XmlReaderHelper.IsStartElement(reader, "c", Ns))
+                                                    {
+                                                        cellIndex++;
+                                                        maxColumnIndex = Math.Max(maxColumnIndex, cellIndex);
+                                                    }
+
+                                                    if (!XmlReaderHelper.SkipContent(reader))
+                                                        break;
+                                                }
+                                            }
                                         }
-                                    }
-                                    else if (!XmlReaderHelper.SkipContent(reader))
-                                    {
-                                        break;
+                                        else if (!XmlReaderHelper.SkipContent(reader))
+                                        {
+                                            break;
+                                        }
                                     }
                                 }
                             }
@@ -822,17 +835,18 @@ namespace MiniExcelLibs.OpenXml
             return ranges;
         }
 
-        internal static bool TryGetMaxRowColumnIndex(ZipArchiveEntry sheetEntry, out bool withoutCR, out int maxRowIndex, out int maxColumnIndex)
+        private static bool TryGetMaxRowColumnIndex(ZipArchiveEntry sheetEntry, XmlReaderSettings settings, out bool withoutCr, out int maxRowIndex, out int maxColumnIndex)
         {
-            withoutCR = false;
+            withoutCr = false;
             maxRowIndex = -1;
             maxColumnIndex = -1;
+            
             using (var sheetStream = sheetEntry.Open())
-            using (var reader = XmlReader.Create(sheetStream, _xmlSettings))
+            using (var reader = XmlReader.Create(sheetStream, settings))
             {
                 while (reader.Read())
                 {
-                    if (XmlReaderHelper.IsStartElement(reader, "c", _ns))
+                    if (XmlReaderHelper.IsStartElement(reader, "c", Ns))
                     {
                         var r = reader.GetAttribute("r");
                         if (r != null)
@@ -847,12 +861,12 @@ namespace MiniExcelLibs.OpenXml
                         }
                         else
                         {
-                            withoutCR = true;
+                            withoutCr = true;
                             break;
                         }
                     }
                     //this method logic depends on dimension to get maxcolumnIndex, if without dimension then it need to foreach all rows first time to get maxColumn and maxRowColumn
-                    else if (XmlReaderHelper.IsStartElement(reader, "dimension", _ns))
+                    else if (XmlReaderHelper.IsStartElement(reader, "dimension", Ns))
                     {
                         var refAttr = reader.GetAttribute("ref");
                         if (string.IsNullOrEmpty(refAttr))
@@ -871,45 +885,44 @@ namespace MiniExcelLibs.OpenXml
                 }
             }
 
-            if (withoutCR)
+            if (!withoutCr) 
+                return true;
+            
+            using (var sheetStream = sheetEntry.Open())
+            using (var reader = XmlReader.Create(sheetStream, settings))
             {
-                using (var sheetStream = sheetEntry.Open())
-                using (var reader = XmlReader.Create(sheetStream, _xmlSettings))
+                if (!XmlReaderHelper.IsStartElement(reader, "worksheet", Ns))
+                    return false;
+
+                if (!XmlReaderHelper.ReadFirstContent(reader))
+                    return false;
+
+                while (!reader.EOF)
                 {
-                    if (!XmlReaderHelper.IsStartElement(reader, "worksheet", _ns))
-                        return false;
-
-                    if (!XmlReaderHelper.ReadFirstContent(reader))
-                        return false;
-
-                    while (!reader.EOF)
+                    if (XmlReaderHelper.IsStartElement(reader, "sheetData", Ns))
                     {
-                        if (XmlReaderHelper.IsStartElement(reader, "sheetData", _ns))
+                        if (XmlReaderHelper.ReadFirstContent(reader))
                         {
-                            if (!XmlReaderHelper.ReadFirstContent(reader))
-                                continue;
-
                             while (!reader.EOF)
                             {
-                                if (XmlReaderHelper.IsStartElement(reader, "row", _ns))
+                                if (XmlReaderHelper.IsStartElement(reader, "row", Ns))
                                 {
                                     maxRowIndex++;
 
-                                    if (!XmlReaderHelper.ReadFirstContent(reader))
-                                        continue;
-
-                                    // Cells
-                                    var cellIndex = -1;
-                                    while (!reader.EOF)
+                                    if (XmlReaderHelper.ReadFirstContent(reader))
                                     {
-                                        if (XmlReaderHelper.IsStartElement(reader, "c", _ns))
+                                        var cellIndex = -1;
+                                        while (!reader.EOF)
                                         {
-                                            cellIndex++;
-                                            maxColumnIndex = Math.Max(maxColumnIndex, cellIndex);
-                                        }
+                                            if (XmlReaderHelper.IsStartElement(reader, "c", Ns))
+                                            {
+                                                cellIndex++;
+                                                maxColumnIndex = Math.Max(maxColumnIndex, cellIndex);
+                                            }
 
-                                        if (!XmlReaderHelper.SkipContent(reader))
-                                            break;
+                                            if (!XmlReaderHelper.SkipContent(reader))
+                                                break;
+                                        }
                                     }
                                 }
                                 else if (!XmlReaderHelper.SkipContent(reader))
@@ -918,10 +931,10 @@ namespace MiniExcelLibs.OpenXml
                                 }
                             }
                         }
-                        else if (!XmlReaderHelper.SkipContent(reader))
-                        {
-                            break;
-                        }
+                    }
+                    else if (!XmlReaderHelper.SkipContent(reader))
+                    {
+                        break;
                     }
                 }
             }
@@ -929,27 +942,27 @@ namespace MiniExcelLibs.OpenXml
             return true;
         }
 
-        internal static bool TryGetMergeCells(ZipArchiveEntry sheetEntry, out MergeCells mergeCells)
+        private static bool TryGetMergeCells(ZipArchiveEntry sheetEntry, XmlReaderSettings settings, out MergeCells mergeCells)
         {
             mergeCells = new MergeCells();
+            
             using (var sheetStream = sheetEntry.Open())
-            using (XmlReader reader = XmlReader.Create(sheetStream, _xmlSettings))
+            using (var reader = XmlReader.Create(sheetStream, settings))
             {
-                if (!XmlReaderHelper.IsStartElement(reader, "worksheet", _ns))
+                if (!XmlReaderHelper.IsStartElement(reader, "worksheet", Ns))
                     return false;
+                
                 while (reader.Read())
                 {
-                    if (!XmlReaderHelper.IsStartElement(reader, "mergeCells", _ns))
-                    {
+                    if (!XmlReaderHelper.IsStartElement(reader, "mergeCells", Ns))
                         continue;
-                    }
 
                     if (!XmlReaderHelper.ReadFirstContent(reader))
                         return false;
 
                     while (!reader.EOF)
                     {
-                        if (XmlReaderHelper.IsStartElement(reader, "mergeCell", _ns))
+                        if (XmlReaderHelper.IsStartElement(reader, "mergeCell", Ns))
                         {
                             var refAttr = reader.GetAttribute("ref");
                             var refs = refAttr.Split(':');
@@ -968,7 +981,10 @@ namespace MiniExcelLibs.OpenXml
                                 for (int y = y1; y <= y2; y++)
                                 {
                                     if (!isFirst)
+                                    {
                                         mergeCells.MergesMap.Add(ReferenceHelper.ConvertXyToCell(x, y), refs[0]);
+                                    }
+
                                     isFirst = false;
                                 }
                             }
@@ -1002,7 +1018,7 @@ namespace MiniExcelLibs.OpenXml
             {
                 if (disposing)
                 {
-                    if (_sharedStrings is SharedStringsDiskCache cache)
+                    if (SharedStrings is SharedStringsDiskCache cache)
                     {
                         cache.Dispose();
                     }

@@ -1,6 +1,7 @@
 ﻿using MiniExcelLibs.OpenXml;
 using MiniExcelLibs.Zip;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -13,8 +14,12 @@ namespace MiniExcelLibs.Picture
         public static void AddPicture(Stream excelStream, params MiniExcelPicture[] images)
         {
             // get sheets
+            List<SheetRecord>  sheetEntries;
             var excelArchive = new ExcelOpenXmlZip(excelStream);
-            var sheetEntries = new ExcelOpenXmlSheetReader(excelStream, null).GetWorkbookRels(excelArchive.entries).ToList();
+            using (var reader = ExcelOpenXmlSheetReader.Create(excelStream, null))
+            {
+                sheetEntries = reader.GetWorkbookRels(excelArchive.entries).ToList();
+            }
 
             var drawingRelId = $"rId{Guid.NewGuid():N}";
             var drawingId = Guid.NewGuid().ToString("N");

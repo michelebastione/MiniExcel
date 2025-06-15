@@ -1,14 +1,14 @@
 ﻿using MiniExcelLibs.OpenXml;
-using System;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using System.Xml;
     
 namespace MiniExcelLibs.Utils
 {
     internal static class StringHelper
     {
-        private static readonly string[] _ns = { Config.SpreadsheetmlXmlns, Config.SpreadsheetmlXmlStrictns };
+        private static readonly string[] Ns = { Config.SpreadsheetmlXmlns, Config.SpreadsheetmlXmlStrictns };
 
         public static string GetLetters(string content) => new string(content.Where(char.IsLetter).ToArray());
         public static int GetNumber(string content) => int.Parse(new string(content.Where(char.IsNumber).ToArray()));
@@ -24,16 +24,42 @@ namespace MiniExcelLibs.Utils
 
             while (!reader.EOF)
             {
-                if (XmlReaderHelper.IsStartElement(reader, "t", _ns))
+                if (XmlReaderHelper.IsStartElement(reader, "t", Ns))
                 {
                     // There are multiple <t> in a <si>. Concatenate <t> within an <si>.
                     result.Append(reader.ReadElementContentAsString());
                 }
-                else if (XmlReaderHelper.IsStartElement(reader, "r", _ns))
+                else if (XmlReaderHelper.IsStartElement(reader, "r", Ns))
                 {
                     result.Append(ReadRichTextRun(reader));
                 }
                 else if (!XmlReaderHelper.SkipContent(reader))
+                {
+                    break;
+                }
+            }
+
+            return result.ToString();
+        }
+        
+        public static async Task<string> ReadStringItemAsync(XmlReader reader)
+        {
+            var result = new StringBuilder();
+            if (!await XmlReaderHelper.ReadFirstContentAsync(reader))
+                return string.Empty;
+
+            while (!reader.EOF)
+            {
+                if (XmlReaderHelper.IsStartElement(reader, "t", Ns))
+                {
+                    // There are multiple <t> in a <si>. Concatenate <t> within an <si>.
+                    result.Append(await reader.ReadElementContentAsStringAsync());
+                }
+                else if (XmlReaderHelper.IsStartElement(reader, "r", Ns))
+                {
+                    result.Append(await ReadRichTextRunAsync(reader));
+                }
+                else if (!await XmlReaderHelper.SkipContentAsync(reader))
                 {
                     break;
                 }
@@ -53,11 +79,32 @@ namespace MiniExcelLibs.Utils
 
             while (!reader.EOF)
             {
-                if (XmlReaderHelper.IsStartElement(reader, "t", _ns))
+                if (XmlReaderHelper.IsStartElement(reader, "t", Ns))
                 {
                     result.Append(reader.ReadElementContentAsString());
                 }
                 else if (!XmlReaderHelper.SkipContent(reader))
+                {
+                    break;
+                }
+            }
+
+            return result.ToString();
+        }
+        
+        private static async Task<string> ReadRichTextRunAsync(XmlReader reader)
+        {
+            var result = new StringBuilder();
+            if (! await XmlReaderHelper.ReadFirstContentAsync(reader))
+                return string.Empty;
+
+            while (!reader.EOF)
+            {
+                if (XmlReaderHelper.IsStartElement(reader, "t", Ns))
+                {
+                    result.Append(await reader.ReadElementContentAsStringAsync());
+                }
+                else if (!await XmlReaderHelper.SkipContentAsync(reader))
                 {
                     break;
                 }

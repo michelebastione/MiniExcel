@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,7 +20,7 @@ namespace MiniExcelLibs.Csv
         public CsvReader(Stream stream, IConfiguration configuration)
         {
             _stream = stream;
-            _config = configuration == null ? CsvConfiguration.DefaultConfiguration : (CsvConfiguration)configuration;
+            _config = _config = configuration as CsvConfiguration ?? CsvConfiguration.DefaultConfiguration;
         }
 
         public IEnumerable<IDictionary<string, object>> Query(bool useHeaderRow, string sheetName, string startCell)
@@ -34,8 +35,8 @@ namespace MiniExcelLibs.Csv
             var firstRow = true;
             var headRows = new Dictionary<int, string>();
 
-            string row;
-            for (var rowIndex = 1; (row = reader.ReadLine()) != null; rowIndex++)
+            var rowIndex = 1;
+            while(reader.ReadLine() is string row)
             {
                 string finalRow = row;
                 if (_config.ReadLineBreaksWithinQuotes)
@@ -103,6 +104,7 @@ namespace MiniExcelLibs.Csv
                         cell[ColumnHelper.GetAlphabetColumnName(i)] = read[i];
                 }
 
+                rowIndex++;
                 yield return cell;
             }
         }
@@ -165,6 +167,140 @@ namespace MiniExcelLibs.Csv
             return await Task.Run(() => QueryRange<T>(sheetName, startRowIndex, startColumnIndex, endRowIndex, endColumnIndex, hasHeader), cancellationToken).ConfigureAwait(false);
         }
 
+#if NETCOREAPP3_0_OR_GREATER
+        public async IAsyncEnumerable<IDictionary<string, object>> EnumerateAsync(bool useHeaderRow, string sheetName, string startCell, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            if (startCell != "A1")
+                throw new NotImplementedException("CSV does not implement parameter startCell");
+
+            if (_stream.CanSeek)
+                _stream.Position = 0;
+ 
+            var reader = _config.StreamReaderFunc(_stream);
+            var firstRow = true;
+            var headRows = new Dictionary<int, string>();
+
+            var rowIndex = 1;
+            while (await reader.ReadLineAsync(cancellationToken) is { } row)
+            {
+                string finalRow = row;
+                if (_config.ReadLineBreaksWithinQuotes)
+                {
+                    while (finalRow.Count(c => c == '"') % 2 != 0)
+                    {
+                        var nextPart = await reader.ReadLineAsync(cancellationToken);
+                        if (nextPart == null)
+                        {
+                            break;
+                        }
+                        finalRow = string.Concat(finalRow, _config.NewLine, nextPart);
+                    }
+                }
+                var read = Split(finalRow);
+
+                // invalid row check
+                if (read.Length < headRows.Count)
+                {
+                    var colIndex = read.Length;
+                    var headers = headRows.ToDictionary(x => x.Value, x => x.Key);
+                    var rowValues = read
+                        .Select((x, i) => (Key: headRows[i], Value: x))
+                        .ToDictionary(x => x.Key, x => x.Value);
+                    
+                    throw new ExcelColumnNotFoundException(null, headRows[colIndex], null, rowIndex, headers, rowValues, $"Csv read error: Column {colIndex} not found in Row {rowIndex}");
+                }
+
+                //header
+                if (useHeaderRow)
+                {
+                    if (firstRow)
+                    {
+                        firstRow = false;
+                        for (int i = 0; i <= read.Length - 1; i++)
+                            headRows.Add(i, read[i]);
+                        continue;
+                    }
+
+                    var headCell = CustomPropertyHelper.GetEmptyExpandoObject(headRows);
+                    for (int i = 0; i <= read.Length - 1; i++)
+                        headCell[headRows[i]] = read[i];
+
+                    yield return headCell;
+                    continue;
+                }
+
+                //body
+                if (firstRow) // record first row as reference
+                {
+                    firstRow = false;
+                    for (int i = 0; i <= read.Length - 1; i++)
+                        headRows.Add(i, $"c{i + 1}");
+                }
+
+                var cell = CustomPropertyHelper.GetEmptyExpandoObject(read.Length - 1, 0);
+                if (_config.ReadEmptyStringAsNull)
+                {
+                    for (int i = 0; i <= read.Length - 1; i++)
+                        cell[ColumnHelper.GetAlphabetColumnName(i)] = read[i]?.Length == 0 ? null : read[i];
+                }
+                else
+                {
+                    for (int i = 0; i <= read.Length - 1; i++)
+                        cell[ColumnHelper.GetAlphabetColumnName(i)] = read[i];
+                }
+
+                yield return cell;
+                rowIndex++;
+            }
+        }
+
+        public IAsyncEnumerable<T> EnumerateAsync<T>(string sheetName, string startCell, bool hasHeader, CancellationToken cancellationToken = default) where T : class, new()
+        {
+            var dynamicRecords = EnumerateAsync(false, sheetName, startCell, cancellationToken).ConfigureAwait(false);
+            return ExcelOpenXmlSheetReader.EnumerateImplAsync<T>(dynamicRecords, startCell, hasHeader, _config, cancellationToken);
+        }
+
+        public async IAsyncEnumerable<IDictionary<string, object>> EnumerateRangeAsync(bool useHeaderRow, string sheetName, string startCell, string endCell, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            var reader = await ExcelOpenXmlSheetReader.CreateAsync(_stream, _config);
+            var query = reader.EnumerateRangeAsync(useHeaderRow, sheetName, startCell, endCell, cancellationToken).ConfigureAwait(false);
+            await foreach (var row in query)
+            {
+                yield return row;
+            }
+        }
+
+        public async IAsyncEnumerable<T> EnumerateRangeAsync<T>(string sheetName, string startCell, string endCell, bool hasHeader, [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class, new()
+        {
+            var reader = await ExcelOpenXmlSheetReader.CreateAsync(_stream, _config);
+            var query = reader.EnumerateRangeAsync<T>(sheetName, startCell, endCell, hasHeader, cancellationToken).ConfigureAwait(false);
+            await foreach (var row in query)
+            {
+                yield return row;
+            }
+        }
+
+        public async IAsyncEnumerable<IDictionary<string, object>> EnumerateRangeAsync(bool useHeaderRow, string sheetName, int startRowIndex, int startColumnIndex, int? endRowIndex, int? endColumnIndex, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            var reader = await ExcelOpenXmlSheetReader.CreateAsync(_stream, _config);
+            var query = reader.EnumerateRangeAsync(useHeaderRow, sheetName, startRowIndex, startColumnIndex, endRowIndex, endColumnIndex, cancellationToken).ConfigureAwait(false);
+            await foreach (var row in query)
+            {
+                yield return row;
+            }
+        }
+
+        public async IAsyncEnumerable<T> EnumerateRangeAsync<T>(string sheetName, int startRowIndex, int startColumnIndex, int? endRowIndex, int? endColumnIndex, bool hasHeader, [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class, new()
+        {
+            var reader = await ExcelOpenXmlSheetReader.CreateAsync(_stream, _config);
+            var query = reader.EnumerateRangeAsync<T>(sheetName, startRowIndex, startColumnIndex, endRowIndex, endColumnIndex, hasHeader, cancellationToken).ConfigureAwait(false);
+            await foreach (var row in query)
+            {
+                yield return row;
+            }
+        }
+#endif
+        
         private string[] Split(string row)
         {
             if (_config.SplitFn != null)
