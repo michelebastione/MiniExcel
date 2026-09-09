@@ -12,6 +12,12 @@ public class CsvConfiguration : MiniExcelBaseConfiguration
     public string NewLine { get; set; } = "\r\n";
     public bool ReadLineBreaksWithinQuotes { get; set; } = true;
     public bool ReadEmptyStringAsNull { get; set; } = false;
+
+    /// <summary>
+    /// When set to true, rows with fewer columns than the header are padded with default values
+    /// instead of throwing ColumnNotFoundException. Default is false.
+    /// </summary>
+    public bool FillMissingColumns { get; set; } = false;
     public bool AlwaysQuote { get; set; } = false;
     public bool QuoteWhitespaces { get; set; } = true;
     public Func<string, string[]>? SplitFn { get; set; }

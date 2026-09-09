@@ -67,7 +67,7 @@ internal sealed partial class CsvReader : IMiniExcelReader
             var read = Split(finalRow);
 
             // invalid row check
-            if (read.Length < headRows.Count)
+            if (read.Length < headRows.Count && !_config.FillMissingColumns)
             {
                 var colIndex = read.Length;
                 var headers = headRows.ToDictionary(x => x.Value, x => x.Key);
@@ -106,7 +106,8 @@ internal sealed partial class CsvReader : IMiniExcelReader
             }
 
             // todo: can we find a way to remove the redundant cell conversions for CSV?
-            var cell = ExpandoHelper.CreateEmptyByIndices(read.Length - 1, 0);
+            var maxCol = (_config.FillMissingColumns ? headRows.Count : read.Length) - 1;
+            var cell = ExpandoHelper.CreateEmptyByIndices(maxCol, 0);
             if (_config.ReadEmptyStringAsNull)
             {
                 for (int i = 0; i <= read.Length - 1; i++)
