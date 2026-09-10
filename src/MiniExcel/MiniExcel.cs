@@ -5,8 +5,6 @@ using MiniExcelLib.OpenXml;
 using MiniExcelLib.OpenXml.Models;
 using MiniExcelLib.OpenXml.Picture;
 using Zomp.SyncMethodGenerator;
-
-using NewMiniExcel = MiniExcelLib.MiniExcel;
 using NewOpenXmlConfiguration = MiniExcelLib.OpenXml.OpenXmlConfiguration;
 using MiniExcelDataReader = MiniExcelLib.Core.MiniExcelDataReaderBase;
 
@@ -15,12 +13,12 @@ namespace MiniExcelLibs;
 
 public static partial class MiniExcel
 {
-    private static readonly OpenXmlExporter ExcelExporter = NewMiniExcel.Exporters.GetOpenXmlExporter();
-    private static readonly OpenXmlImporter ExcelImporter = NewMiniExcel.Importers.GetOpenXmlImporter();
-    private static readonly OpenXmlTemplater ExcelTemplater = NewMiniExcel.Templaters.GetOpenXmlTemplater();
+    private static readonly OpenXmlExporter ExcelExporter = MiniExcelV2.Exporters.GetOpenXmlExporter();
+    private static readonly OpenXmlImporter ExcelImporter = MiniExcelV2.Importers.GetOpenXmlImporter();
+    private static readonly OpenXmlTemplater ExcelTemplater = MiniExcelV2.Templaters.GetOpenXmlTemplater();
     
-    private static readonly CsvExporter CsvExporter = NewMiniExcel.Exporters.GetCsvExporter();
-    private static readonly CsvImporter CsvImporter = NewMiniExcel.Importers.GetCsvImporter();
+    private static readonly CsvExporter CsvExporter = MiniExcelV2.Exporters.GetCsvExporter();
+    private static readonly CsvImporter CsvImporter = MiniExcelV2.Importers.GetCsvImporter();
 
     
     [CreateSyncVersion]
