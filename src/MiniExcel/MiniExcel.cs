@@ -16,7 +16,7 @@ namespace MiniExcelLibs;
 /// <summary>
 /// This class is a facade containing the methods' signatures from the V1 API, preserved for backwards compatibility.
 /// We encourage the users to take advantage of the idiomatic <see cref="MiniExcelV2"/> class instead
-/// for a compartimentalized, richer and more flexible API.
+/// for a compartmentalized, richer and more flexible API.
 /// </summary>
 public static partial class MiniExcel
 {
