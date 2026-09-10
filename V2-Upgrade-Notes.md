@@ -1,7 +1,7 @@
 ## MiniExcel 2.0 Upgrade Notes
 
 - Support for .NET Framework 4.5 was dropped, the minimum supported Framework version is now 4.6.2. 
-- The root namespace was changed from `MiniExcelLibs` to `MiniExcelLib`, and the static class working as the library's entry point was renamed from `MiniExcel` to `MiniExcelV2`  
+- The root namespace was changed from `MiniExcelLibs` to `MiniExcelLib`; there is also a new entry point to the library, the static class `MiniExcelV2`. The original class has been turned into a facade for backwards compatibility reasons (more on that later).   
 - Instead of having all methods being part of a single static class, the functionalities are now split into 3 providers:
 `MiniExcelV2.Importers`, `MiniExcelV2.Exporters` and `MiniExcelV2.Templaters` will give you access to, respectively, the `MiniExcelImporterProvider`, `MiniExcelExporterProvider` and `MiniExcelTemplaterProvider`.
 - This way Excel and Csv query methods are split between the `OpenXmlImporter` and the `CsvImporter`, accessible from the `MiniExcelImporterProvider`.
